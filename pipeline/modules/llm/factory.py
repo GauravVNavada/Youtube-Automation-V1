@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from modules.llm.anthropic_provider import AnthropicProvider
 from modules.llm.gemini_provider import GeminiProvider
 from modules.llm.groq_provider import GroqProvider
+from modules.llm.offline_provider import OfflineProvider
 from modules.llm.providers import LLMProvider
 
 
@@ -24,6 +25,9 @@ class LLMConfig:
 def create_llm_provider(config: LLMConfig) -> LLMProvider:
     """Create the best JSON LLM provider from one generic or provider key."""
     provider = (config.provider or "auto").strip().lower()
+
+    if provider in {"offline", "local", "template"}:
+        return OfflineProvider()
 
     if provider in {"anthropic", "claude"}:
         key = config.api_key or config.anthropic_api_key

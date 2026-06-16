@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from modules.render.ffmpeg_builder import build_image_slideshow_command
+from modules.render.ffmpeg_builder import build_image_slideshow_command, build_media_timeline_command
 
 
 def render_video(
@@ -15,6 +15,8 @@ def render_video(
     output_path: Path,
     duration_ms: int,
     music_path: str | None = None,
+    media_paths: list[str] | None = None,
+    media_types: list[str] | None = None,
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
@@ -33,18 +35,33 @@ def render_video(
         tmp_path.unlink()
 
     duration_seconds = max(1.0, duration_ms / 1000.0)
-    cmd = build_image_slideshow_command(
-        ffmpeg=ffmpeg,
-        image_paths=image_paths,
-        audio_path=audio_path,
-        ass_caption_path=ass_caption_path,
-        output_path=str(tmp_path),
-        duration_seconds=duration_seconds,
-        music_path=music_path,
-        width=width,
-        height=height,
-        fps=fps,
-    )
+    if media_paths:
+        cmd = build_media_timeline_command(
+            ffmpeg=ffmpeg,
+            media_paths=media_paths,
+            media_types=media_types or ["image"] * len(media_paths),
+            audio_path=audio_path,
+            ass_caption_path=ass_caption_path,
+            output_path=str(tmp_path),
+            duration_seconds=duration_seconds,
+            music_path=music_path,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+    else:
+        cmd = build_image_slideshow_command(
+            ffmpeg=ffmpeg,
+            image_paths=image_paths,
+            audio_path=audio_path,
+            ass_caption_path=ass_caption_path,
+            output_path=str(tmp_path),
+            duration_seconds=duration_seconds,
+            music_path=music_path,
+            width=width,
+            height=height,
+            fps=fps,
+        )
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg failed: {proc.stderr[-2000:]}")

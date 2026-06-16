@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 from app.schemas import GenreConfig, ImageCue
+from modules.assets.fallback_image import create_fallback_image
 from modules.assets.image_scoring import score_image
 from modules.assets.image_services import (
     download_image,
+    search_bing,
     search_pexels,
     search_pixabay,
     search_wikimedia,
@@ -29,9 +32,12 @@ def fetch_image_for_cue(
 
     candidates = []
     search_errors: list[str] = []
+    bing_key = os.getenv("BING_IMAGE_SEARCH_KEY", "").strip() or os.getenv("BING_SEARCH_KEY", "").strip()
+    bing_endpoint = os.getenv("BING_IMAGE_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/images/search").strip()
     for source_name, search_fn, args in (
         ("pexels", search_pexels, (cue.keyword, pexels_key)),
         ("pixabay", search_pixabay, (cue.keyword, pixabay_key)),
+        ("bing", search_bing, (cue.keyword, bing_key, bing_endpoint)),
         ("wikimedia", search_wikimedia, (cue.keyword,)),
     ):
         try:
@@ -47,8 +53,7 @@ def fetch_image_for_cue(
     scored = [(score, result) for score, result in scored if score > 0]
     scored.sort(key=lambda item: item[0], reverse=True)
     if not scored:
-        details = f" Search errors: {'; '.join(search_errors)}" if search_errors else ""
-        raise RuntimeError(f"No online image candidates found for cue: {cue.keyword}.{details}")
+        return create_fallback_image(cue.keyword, target), "generated_fallback"
 
     download_errors: list[str] = []
     for _, result in scored[:3]:
@@ -58,6 +63,4 @@ def fetch_image_for_cue(
             download_errors.append(f"{result.source}: {exc}")
             continue
 
-    details_parts = download_errors + [f"search {error}" for error in search_errors]
-    details = "; ".join(details_parts) if details_parts else "no download attempts"
-    raise RuntimeError(f"Could not download an online image for cue '{cue.keyword}': {details}")
+    return create_fallback_image(cue.keyword, target), "generated_fallback"

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.database import SessionLocal, init_database
-from app.routers import auth, chats, generation, health, jobs, knowledge, onboarding
+from app.routers import auth, chats, generation, health, jobs, knowledge, onboarding, playground
 from app.services.knowledge_seed import seed_pipeline_knowledge
 
 
@@ -37,3 +37,4 @@ app.include_router(generation.router, prefix="/api")
 app.include_router(chats.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(knowledge.router, prefix="/api")
+app.include_router(playground.router, prefix="/api")

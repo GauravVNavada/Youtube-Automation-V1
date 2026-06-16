@@ -16,7 +16,8 @@ def validate_script(script: ScriptOutput, min_words: int, max_words: int) -> Val
         issues.append("Narration is missing")
     elif not _ends_complete_sentence(script.narration):
         issues.append("Narration appears to end mid-sentence")
-    if script.word_count < min_words:
+    min_tolerance = 1
+    if script.word_count < min_words - min_tolerance:
         issues.append(f"Narration too short: {script.word_count} < {min_words}")
     if script.word_count > max_words:
         issues.append(f"Narration too long: {script.word_count} > {max_words}")

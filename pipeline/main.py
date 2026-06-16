@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from agents.caption_agent import CaptionAgent
 from agents.render_agent import RenderAgent
 from agents.research_agent import ResearchAgent
 from agents.script_agent import ScriptAgent
+from agents.thumbnail_agent import ThumbnailAgent
 from agents.topic_discovery_agent import TopicDiscoveryAgent
 from agents.validation_agent import ValidationAgent
 from app.config import get_settings
@@ -81,7 +83,7 @@ def main() -> int:
         )
 
         print(f"[run] {run_dir}")
-        print("[1/8] Discovering grounded angle...")
+        print("[1/9] Discovering grounded angle...")
         discovery = run_stage(
             errors,
             "topic_discovery_agent",
@@ -94,7 +96,7 @@ def main() -> int:
             context=context,
         )
 
-        print("[2/8] Building research brief...")
+        print("[2/9] Building research brief...")
         research = run_stage(
             errors,
             "research_agent",
@@ -108,7 +110,7 @@ def main() -> int:
         )
         growth_context = GrowthContext(topic_discovery=discovery, research=research, notes=args.notes)
 
-        print("[3/8] Generating script...")
+        print("[3/9] Generating script...")
         script = run_stage(
             errors,
             "script_agent",
@@ -138,7 +140,7 @@ def main() -> int:
             context={"issues": script_check.issues},
         )
 
-        print("[4/8] Fetching assets...")
+        print("[4/9] Fetching assets...")
         assets = run_stage(
             errors,
             "asset_agent",
@@ -148,11 +150,13 @@ def main() -> int:
                 genre,
                 pexels_key=settings.pexels_api_key,
                 pixabay_key=settings.pixabay_api_key,
+                provider=provider,
             ),
             context={
                 "image_cues": script.image_cues,
                 "has_pexels_key": bool(settings.pexels_api_key),
                 "has_pixabay_key": bool(settings.pixabay_api_key),
+                "asset_source_order": ["pexels_video", "pexels_image", "pixabay_image", "bing_image", "wikimedia_image"],
             },
         )
         asset_check = run_stage(
@@ -168,7 +172,7 @@ def main() -> int:
             context={"issues": asset_check.issues},
         )
 
-        print("[5/8] Generating audio...")
+        print("[5/9] Generating audio...")
         audio = run_stage(
             errors,
             "audio_agent",
@@ -198,7 +202,7 @@ def main() -> int:
             context={"issues": audio_check.issues},
         )
 
-        print("[6/8] Building captions...")
+        print("[6/9] Building captions...")
         captions = run_stage(
             errors,
             "caption_agent",
@@ -225,13 +229,15 @@ def main() -> int:
             context={"issues": caption_check.issues},
         )
 
-        print("[7/8] Rendering video...")
+        print("[7/9] Rendering video...")
         render = run_stage(
             errors,
             "render_agent",
             lambda: RenderAgent(run_dir).run(assets, audio, captions),
             context={
                 "image_count": len(assets.image_paths),
+                "video_count": len(assets.video_paths),
+                "media_count": len(assets.media_paths),
                 "audio_path": audio.final_audio_path,
                 "caption_path": captions.ass_path,
             },
@@ -249,8 +255,23 @@ def main() -> int:
             context={"issues": render_check.issues},
         )
 
-        print("[8/8] Complete.")
+        print("[8/9] Generating thumbnails...")
+        thumbnails = run_stage(
+            errors,
+            "thumbnail_agent",
+            lambda: ThumbnailAgent(run_dir).run(script, assets, render, discovery, research),
+            context={
+                "title": script.title,
+                "video_path": render.video_path,
+                "image_count": len(assets.image_paths),
+                "video_count": len(assets.video_paths),
+            },
+        )
+
+        print("[9/9] Complete.")
         print(f"Final video: {render.video_path}")
+        print(f"Shorts cover: {thumbnails.shorts_cover_path}")
+        print(f"YouTube thumbnail: {thumbnails.youtube_thumbnail_path}")
         return 0
     except Exception as exc:
         print(f"[error] {exc}", file=sys.stderr)
@@ -273,10 +294,126 @@ def ensure_passed(issues: list[str]) -> None:
 
 
 def load_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
     path = DATA_DIR / "reference_scripts" / f"{genre_id}.json"
-    if not path.exists():
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            references.extend(item for item in data if isinstance(item, dict))
+    references.extend(_load_db_reference_scripts(genre_id))
+    return _dedupe_references(references)
+
+
+def _load_db_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
+    if os.environ.get("MODULARSHORTS_DB_REFERENCES", "1").strip().lower() in {"0", "false", "no", "off"}:
         return []
-    return json.loads(path.read_text(encoding="utf-8"))
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if not database_url:
+        return []
+    try:
+        from sqlalchemy import create_engine, text
+    except Exception:
+        return []
+    query = text(
+        """
+        SELECT
+            rv.genre_id,
+            rv.video_url,
+            rv.channel_name,
+            rv.views,
+            rv.likes,
+            rv.comments,
+            rv.upload_date,
+            rv.duration_sec,
+            rv.title,
+            rv.description_first_line,
+            rv.hashtags,
+            rv.full_script,
+            rv.word_count,
+            rv.overall_score,
+            rv.notes,
+            sa.hook_first_sentence,
+            sa.hook_type,
+            sa.hook_emotional_trigger,
+            sa.has_twist_reveal,
+            sa.twist_line,
+            sa.ending_type,
+            sa.last_sentence,
+            sa.power_words,
+            sa.emphasis_words,
+            sa.sensory_language_used,
+            sa.retention_hook,
+            sa.likely_share_trigger,
+            sa.why_it_worked,
+            sa.what_to_improve
+        FROM reference_videos rv
+        LEFT JOIN script_analysis sa ON sa.reference_video_id = rv.id
+        WHERE rv.genre_id = :genre_id AND rv.usable_as_few_shot = true
+        ORDER BY rv.overall_score DESC, rv.views DESC, rv.id ASC
+        LIMIT 40
+        """
+    )
+    try:
+        engine = create_engine(database_url, pool_pre_ping=True)
+        with engine.connect() as connection:
+            rows = connection.execute(query, {"genre_id": genre_id}).mappings().all()
+    except Exception:
+        return []
+    return [_reference_from_db_row(row) for row in rows]
+
+
+def _reference_from_db_row(row: Any) -> dict[str, Any]:
+    return {
+        "genre_id": row.get("genre_id", ""),
+        "title": row.get("title", ""),
+        "source_url": row.get("video_url", ""),
+        "channel_name": row.get("channel_name", ""),
+        "views": row.get("views", 0),
+        "likes": row.get("likes", 0),
+        "comments": row.get("comments", 0),
+        "upload_date": str(row.get("upload_date") or ""),
+        "duration_sec": row.get("duration_sec", 0),
+        "description_first_line": row.get("description_first_line", ""),
+        "hashtags": _split_csv(row.get("hashtags", "")),
+        "script": row.get("full_script", ""),
+        "full_script": row.get("full_script", ""),
+        "word_count": row.get("word_count", 0),
+        "overall_score": row.get("overall_score", 0),
+        "notes": row.get("notes", ""),
+        "hook_first_sentence": row.get("hook_first_sentence", ""),
+        "hook_type": row.get("hook_type", ""),
+        "hook_emotional_trigger": row.get("hook_emotional_trigger", ""),
+        "has_twist_reveal": row.get("has_twist_reveal", False),
+        "twist_line": row.get("twist_line", ""),
+        "ending_type": row.get("ending_type", ""),
+        "last_sentence": row.get("last_sentence", ""),
+        "power_words": _split_csv(row.get("power_words", "")),
+        "emphasis_words": _split_csv(row.get("emphasis_words", "")),
+        "sensory_language_used": row.get("sensory_language_used", ""),
+        "retention_hook": row.get("retention_hook", ""),
+        "likely_share_trigger": row.get("likely_share_trigger", ""),
+        "why_it_worked": row.get("why_it_worked", ""),
+        "what_to_improve": row.get("what_to_improve", ""),
+        "source": "database_reference",
+    }
+
+
+def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in references:
+        key = str(item.get("source_url") or item.get("video_url") or item.get("title") or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+    return output
+
+
+def _split_csv(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def load_genre(genre_id: str) -> GenreConfig:

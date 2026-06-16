@@ -19,7 +19,7 @@ def score_image(result: ImageResult, query: str, strict: bool = True) -> int:
     haystack = f"{result.url} {result.description}".lower()
     matches = sum(1 for word in words if word in haystack)
     ratio = matches / max(1, len(words))
-    if strict and result.source in {"pexels", "pixabay"} and ratio < 0.35:
+    if strict and result.source in {"pexels", "pixabay", "bing"} and ratio < 0.35:
         return 0
     if result.source not in {"pexels", "pixabay"} and ratio < 0.2:
         return 0
@@ -29,7 +29,7 @@ def score_image(result: ImageResult, query: str, strict: bool = True) -> int:
         score += 20
     elif result.width >= 720 or result.height >= 720:
         score += 10
-    score += {"pexels": 18, "pixabay": 16, "wikimedia": 12}.get(result.source, 6)
+    score += {"pexels": 18, "pixabay": 16, "bing": 14, "wikimedia": 12}.get(result.source, 6)
     if result.url.lower().split("?")[0].endswith((".jpg", ".jpeg", ".png", ".webp")):
         score += 8
     return score

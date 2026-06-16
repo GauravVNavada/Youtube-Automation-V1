@@ -66,15 +66,25 @@ def _local_research_results(
             source="local_profile",
         ),
     ]
-    for ref in reference_scripts[:3]:
+    for ref in reference_scripts[:8]:
+        facts = ref.get("facts") if isinstance(ref.get("facts"), list) else []
+        fact_text = " ".join(str(fact) for fact in facts[:3])
         snippet = " ".join(
             [
                 str(ref.get("hook_type") or ""),
                 str(ref.get("why_it_worked") or ""),
+                fact_text,
                 str(ref.get("script") or "")[:240],
             ]
         )
-        results.append(SearchResult(title=str(ref.get("title") or topic), url="", snippet=snippet, source="local_reference"))
+        results.append(
+            SearchResult(
+                title=str(ref.get("title") or topic),
+                url=str(ref.get("source_url") or ref.get("video_url") or ""),
+                snippet=snippet,
+                source=str(ref.get("source") or "local_reference"),
+            )
+        )
     return results
 
 

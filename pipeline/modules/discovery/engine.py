@@ -65,8 +65,17 @@ def _local_results(
         title = str(ref.get("title") or genre.display_name)
         hook_type = str(ref.get("hook_type") or "reference hook")
         why = str(ref.get("why_it_worked") or "")
+        facts = ref.get("facts") if isinstance(ref.get("facts"), list) else []
+        fact_text = " ".join(str(fact) for fact in facts[:3])
         script = " ".join(str(ref.get("script") or "").split())[:260]
-        results.append(SearchResult(title=f"{topic}: {title}", url="", snippet=f"{hook_type}. {why}. {script}", source="local_reference"))
+        results.append(
+            SearchResult(
+                title=f"{topic}: {title}",
+                url=str(ref.get("source_url") or ref.get("video_url") or ""),
+                snippet=f"{hook_type}. {why}. {fact_text}. {script}",
+                source=str(ref.get("source") or "local_reference"),
+            )
+        )
     if profile.hook_templates or profile.tone_rules:
         results.append(
             SearchResult(

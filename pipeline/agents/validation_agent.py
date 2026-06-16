@@ -33,11 +33,18 @@ class ValidationAgent(BaseAgent):
 
     def validate_assets(self, assets: AssetBundle) -> ValidationResult:
         issues = []
-        if len(assets.image_paths) < 3:
-            issues.append("At least 3 images are required")
+        media_paths = assets.media_paths or assets.image_paths
+        if len(media_paths) < 3:
+            issues.append("At least 3 visual media assets are required")
+        for path in media_paths:
+            if not Path(path).exists():
+                issues.append(f"Missing media asset: {path}")
         for path in assets.image_paths:
             if not Path(path).exists():
                 issues.append(f"Missing image: {path}")
+        for path in assets.video_paths:
+            if not Path(path).exists():
+                issues.append(f"Missing video: {path}")
         return ValidationResult(passed=not issues, issues=issues)
 
     def validate_audio(self, audio: AudioBundle) -> ValidationResult:
@@ -48,10 +55,10 @@ class ValidationAgent(BaseAgent):
             issues.append("Audio duration must be greater than 10 seconds")
         if not audio.word_timestamps:
             issues.append("Word timestamps are missing")
-        if audio.provider != "google_tts":
-            issues.append(f"Real narrator TTS is required, got {audio.provider}")
-        if audio.alignment_source != "whisper":
-            issues.append(f"Whisper caption alignment is required, got {audio.alignment_source}")
+        if audio.provider not in {"google_tts", "edge_tts", "tone_fallback"}:
+            issues.append(f"Unknown audio provider: {audio.provider}")
+        if audio.alignment_source not in {"whisper", "estimated"}:
+            issues.append(f"Unknown caption alignment source: {audio.alignment_source}")
         if audio.mean_volume_db is not None and audio.mean_volume_db < -35:
             issues.append(f"Audio is too quiet: mean volume {audio.mean_volume_db:.1f} dB")
         if audio.max_volume_db is not None and audio.max_volume_db < -12:

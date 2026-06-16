@@ -17,6 +17,9 @@ class RenderAgent(BaseAgent):
         output_path = self.run_dir / "output" / "final.mp4"
         payload = {
             "image_count": len(assets.image_paths),
+            "video_count": len(assets.video_paths),
+            "media_count": len(assets.media_paths),
+            "media_types": assets.media_types,
             "audio_path": audio.final_audio_path,
             "music_path": assets.music_path,
             "ass_caption_path": captions.ass_path,
@@ -31,6 +34,8 @@ class RenderAgent(BaseAgent):
             output_path=output_path,
             duration_ms=audio.duration_ms,
             music_path=assets.music_path,
+            media_paths=assets.media_paths,
+            media_types=assets.media_types,
         )
         result = RenderResult(
             video_path=meta["video_path"],

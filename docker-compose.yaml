@@ -52,12 +52,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       MODULARSHORTS_DATA_DIR: /app/data/pipeline
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
+      PLAYGROUND_PIPELINE_DATA_DIR: /app/playground/data/pipeline
+      PLAYGROUND_RUNS_DIR: /app/playground/data/runs
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8084}
       GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
     ports:
       - "${APP_PORT:-8084}:8080"
     volumes:
       - ./backend/data:/app/data
+      - ./playground/data:/app/playground/data
       - ./secrets:/app/secrets:ro
     depends_on:
       db_app:

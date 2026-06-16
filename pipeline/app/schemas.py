@@ -54,6 +54,10 @@ class AssetBundle:
     sfx_paths: list[str]
     music_path: Optional[str]
     sources: list[str]
+    video_paths: list[str] = field(default_factory=list)
+    media_paths: list[str] = field(default_factory=list)
+    media_types: list[str] = field(default_factory=list)
+    stock_video_search_terms: list[str] = field(default_factory=list)
 
 
 @dataclass

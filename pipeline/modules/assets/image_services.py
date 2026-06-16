@@ -74,6 +74,43 @@ def search_pixabay(query: str, api_key: str, per_page: int = 5) -> list[ImageRes
     return [r for r in results if r.url]
 
 
+def search_bing(
+    query: str,
+    api_key: str,
+    endpoint: str = "https://api.bing.microsoft.com/v7.0/images/search",
+    per_page: int = 5,
+) -> list[ImageResult]:
+    if not api_key:
+        return []
+    endpoint = (endpoint or "https://api.bing.microsoft.com/v7.0/images/search").rstrip("/")
+    params = urllib.parse.urlencode({"q": query, "count": per_page, "safeSearch": "Moderate"})
+    request = urllib.request.Request(
+        f"{endpoint}?{params}",
+        headers={"Ocp-Apim-Subscription-Key": api_key, "User-Agent": "DesktopApp/0.1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Bing image search failed: HTTP {exc.code}: {body}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Bing image search failed: {type(exc).__name__}: {exc}") from exc
+    results = []
+    for item in data.get("value", []):
+        thumbnail = item.get("thumbnail") if isinstance(item.get("thumbnail"), dict) else {}
+        results.append(
+            ImageResult(
+                url=item.get("contentUrl") or item.get("thumbnailUrl") or "",
+                source="bing",
+                width=int(item.get("width") or thumbnail.get("width") or 0),
+                height=int(item.get("height") or thumbnail.get("height") or 0),
+                description=item.get("name", ""),
+            )
+        )
+    return [r for r in results if r.url]
+
+
 def search_wikimedia(query: str, max_results: int = 5) -> list[ImageResult]:
     params = urllib.parse.urlencode(
         {
