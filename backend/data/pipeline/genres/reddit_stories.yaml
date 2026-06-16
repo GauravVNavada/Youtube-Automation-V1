@@ -1,0 +1,15 @@
+genre_id: reddit_stories
+display_name: Reddit Stories
+word_count_min: 80
+word_count_max: 145
+tone: conversational, dramatic, twist-based, first-person story
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 1.0
+music_mood: neutral
+hook_patterns:
+  - "What is the smartest way someone tested {subject}?"
+  - "I pretended not to notice. Then they exposed themselves."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"

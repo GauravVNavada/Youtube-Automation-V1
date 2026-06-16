@@ -1,0 +1,15 @@
+.git
+.pytest_cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.decompile.log
+**/node_modules/
+frontend/release/
+frontend/release/**/*
+backend/data/pipeline/runs/
+playground/data/pipeline/runs/
+pipeline/runs/
+*.sqlite
+*.db
+*.log

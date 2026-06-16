@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+secrets/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+release/
+.pytest_cache/
+playground-runs/
+runs/
+*.log
