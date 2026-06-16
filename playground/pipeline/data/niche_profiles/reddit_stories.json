@@ -1,0 +1,19 @@
+{
+  "genre_id": "reddit_stories",
+  "display_name": "Reddit Stories",
+  "hook_templates": [
+    "What is the moment you realized {detail}?",
+    "I thought {subject} was normal until {detail}.",
+    "The weirdest part was not {subject}. It was {detail}."
+  ],
+  "tone_rules": [
+    "Conversational first-person storytelling.",
+    "Make the setup relatable and the reveal satisfying.",
+    "Keep the conflict believable and easy to follow."
+  ],
+  "title_words": ["test", "secret", "proof", "caught", "truth", "family"],
+  "thumbnail_text_rules": ["Use a direct conflict phrase.", "Keep the text punchy.", "Prefer human stakes."],
+  "visual_keywords": ["family dinner", "phone message", "kitchen counter", "nervous man", "serious woman", "living room"],
+  "hashtag_hints": ["#shorts", "#redditstory", "#storytime"]
+}
+

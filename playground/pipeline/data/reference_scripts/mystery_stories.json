@@ -1,0 +1,20 @@
+[
+  {
+    "title": "The Missing Cup",
+    "hook_type": "ordinary_object",
+    "script": "The detective ignored the broken window and looked at the tea cup. It was still warm, but the house had been empty for two hours. Then he noticed the spoon was placed for a left-handed person. The owner was right-handed.",
+    "why_it_worked": "A small object becomes the clue that flips the whole scene."
+  },
+  {
+    "title": "The Elevator Photo",
+    "hook_type": "visual_clue",
+    "script": "Everyone blamed the man in the elevator photo. But the clock reflection behind him showed 8:14, not 8:41. That meant the camera was mirrored, the floor number was backwards, and the real suspect had never left the lobby.",
+    "why_it_worked": "Visual clue, clear logic, and a final reveal fit short-form pacing."
+  },
+  {
+    "title": "The Wrong Umbrella",
+    "hook_type": "misplaced_item",
+    "script": "A woman reported her neighbor missing during a storm. On the porch, police found an umbrella that was completely dry. That meant it had arrived after the rain stopped, and the person carrying it was not searching for help.",
+    "why_it_worked": "Weather creates a simple clue viewers can follow instantly."
+  }
+]

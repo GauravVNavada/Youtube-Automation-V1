@@ -1,0 +1,16 @@
+genre_id: motivational_stories
+display_name: Motivational Stories
+word_count_min: 70
+word_count_max: 125
+tone: inspiring, simple, emotional, practical, hopeful
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 1.02
+music_mood: uplifting
+hook_patterns:
+  - "Nobody noticed {subject} until one small choice."
+  - "The comeback started with one quiet habit."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"
+  - "Grindset"

@@ -1,0 +1,20 @@
+[
+  {
+    "title": "The Unread Message",
+    "hook_type": "phone_clue",
+    "script": "Maya noticed her boyfriend stopped saying good night, but he still woke up early to charge her phone. One morning, she found a draft message he never sent. It was not an apology. It was a plan to propose.",
+    "why_it_worked": "It creates tension, then resolves it with a warm twist."
+  },
+  {
+    "title": "The Dinner Seat",
+    "hook_type": "family_detail",
+    "script": "Every dinner, his mother left one chair empty. His wife thought it was old grief. Then one night, the mother placed a plate there and said, this is where your father sat when he first accepted me.",
+    "why_it_worked": "A repeated visual detail builds emotional meaning."
+  },
+  {
+    "title": "The Train Platform",
+    "hook_type": "missed_timing",
+    "script": "They broke up on a train platform because both thought the other had stopped caring. Years later, they found the same old ticket in separate wallets. Both had kept proof of the day they pretended not to hurt.",
+    "why_it_worked": "A physical keepsake gives the story a bittersweet reveal."
+  }
+]

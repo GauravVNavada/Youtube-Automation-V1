@@ -1,0 +1,16 @@
+genre_id: history_facts
+display_name: History Facts
+word_count_min: 70
+word_count_max: 125
+tone: clear, surprising, factual, cinematic, curiosity-driven
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 0.96
+music_mood: epic
+hook_patterns:
+  - "Most people remember {subject} wrong."
+  - "This tiny decision changed {place} forever."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"
+  - "You won't believe"

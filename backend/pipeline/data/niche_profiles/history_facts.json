@@ -1,0 +1,19 @@
+{
+  "genre_id": "history_facts",
+  "display_name": "History Facts",
+  "hook_templates": [
+    "History remembers {subject}, but forgets {detail}.",
+    "One small detail changed {subject}.",
+    "This old clue explains why {subject} mattered."
+  ],
+  "tone_rules": [
+    "Curious, cinematic, and factual.",
+    "Use one surprising detail before broader context.",
+    "Avoid fake certainty and keep claims modest."
+  ],
+  "title_words": ["forgotten", "ancient", "secret", "changed", "hidden", "road"],
+  "thumbnail_text_rules": ["Use a surprising historical noun.", "Avoid clickbait that implies false proof."],
+  "visual_keywords": ["ancient road", "old document", "historic city", "stone wall", "museum artifact", "map"],
+  "hashtag_hints": ["#shorts", "#history", "#facts"]
+}
+

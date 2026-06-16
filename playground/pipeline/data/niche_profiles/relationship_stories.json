@@ -1,0 +1,19 @@
+{
+  "genre_id": "relationship_stories",
+  "display_name": "Relationship Stories",
+  "hook_templates": [
+    "The message looked normal until {detail}.",
+    "I knew something changed when {detail}.",
+    "The truth came out because of {detail}."
+  ],
+  "tone_rules": [
+    "Emotional, believable, and specific.",
+    "Keep the conflict human rather than exaggerated.",
+    "Give the ending a clear emotional turn."
+  ],
+  "title_words": ["message", "truth", "choice", "promise", "left", "secret"],
+  "thumbnail_text_rules": ["Use one emotional turning point.", "Keep it readable in 2-4 words."],
+  "visual_keywords": ["phone message", "couple argument", "empty dinner table", "train platform", "wedding ring", "closed door"],
+  "hashtag_hints": ["#shorts", "#relationship", "#story"]
+}
+

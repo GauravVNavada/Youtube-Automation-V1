@@ -1,0 +1,19 @@
+{
+  "genre_id": "motivational_stories",
+  "display_name": "Motivational Stories",
+  "hook_templates": [
+    "Nobody noticed {subject} until {detail}.",
+    "The comeback started with {detail}.",
+    "One quiet habit changed {subject}."
+  ],
+  "tone_rules": [
+    "Warm, direct, and grounded in a specific obstacle.",
+    "Avoid generic speeches and use visible actions.",
+    "End with a practical emotional payoff."
+  ],
+  "title_words": ["comeback", "habit", "quiet", "proof", "never", "try"],
+  "thumbnail_text_rules": ["Use a short emotional phrase.", "Avoid generic success words alone."],
+  "visual_keywords": ["student notebook", "runner shoes", "early morning desk", "empty classroom", "worker hands", "goal list"],
+  "hashtag_hints": ["#shorts", "#motivation", "#story"]
+}
+

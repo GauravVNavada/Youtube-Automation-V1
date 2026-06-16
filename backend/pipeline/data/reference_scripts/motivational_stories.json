@@ -1,0 +1,20 @@
+[
+  {
+    "title": "The Quiet Notebook",
+    "hook_type": "small_habit",
+    "script": "Nobody noticed when Arun started writing one page every morning. At first, it was only messy thoughts. After one year, it became a plan. After two years, it became a business. The change did not look dramatic. It looked daily.",
+    "why_it_worked": "It keeps motivation grounded in a believable small habit."
+  },
+  {
+    "title": "The Last Bench Student",
+    "hook_type": "underdog",
+    "script": "The teacher thought Meera never listened because she sat on the last bench. But every night, she solved one extra problem after dinner. On results day, the class saw a rank. Meera knew they were seeing 300 quiet nights.",
+    "why_it_worked": "A relatable underdog story with a concrete payoff."
+  },
+  {
+    "title": "The Broken Shoe",
+    "hook_type": "humble_detail",
+    "script": "His shoe tore before the interview, so he almost turned back. Instead, he cleaned it, walked in, and answered honestly. Years later, he kept that shoe on his shelf to remember the day confidence stopped needing perfect conditions.",
+    "why_it_worked": "A simple object carries the emotional message."
+  }
+]

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+pipeline/runs/
+pipeline/credentials.json
+pipeline/.env
+pipeline/__pycache__/
+pipeline/**/__pycache__/

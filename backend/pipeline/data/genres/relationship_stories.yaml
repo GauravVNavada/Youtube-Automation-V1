@@ -1,0 +1,16 @@
+genre_id: relationship_stories
+display_name: Relationship Stories
+word_count_min: 80
+word_count_max: 145
+tone: emotional, conversational, realistic, conflict-and-resolution
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 1.0
+music_mood: emotional
+hook_patterns:
+  - "She noticed one change in his routine."
+  - "The message arrived after everyone had left."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"
+  - "Alpha"

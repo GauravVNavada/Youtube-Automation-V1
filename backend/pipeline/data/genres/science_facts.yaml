@@ -1,0 +1,16 @@
+genre_id: science_facts
+display_name: Science Facts
+word_count_min: 70
+word_count_max: 125
+tone: simple, visual, surprising, accurate, easy to understand
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 1.0
+music_mood: bright
+hook_patterns:
+  - "Your brain does this before you notice."
+  - "This everyday object hides a science trick."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"
+  - "Scientists hate this"

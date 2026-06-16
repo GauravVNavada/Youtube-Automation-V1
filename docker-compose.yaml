@@ -1,0 +1,177 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-desktopapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-desktopapp}
+      POSTGRES_DB: ${POSTGRES_DB:-desktopapp}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-desktopapp} -d ${POSTGRES_DB:-desktopapp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-ui:
+    image: adminer:4
+    restart: unless-stopped
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  playground-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PLAYGROUND_POSTGRES_USER:-playground}
+      POSTGRES_PASSWORD: ${PLAYGROUND_POSTGRES_PASSWORD:-playground}
+      POSTGRES_DB: ${PLAYGROUND_POSTGRES_DB:-playground}
+    volumes:
+      - playground_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PLAYGROUND_POSTGRES_USER:-playground} -d ${PLAYGROUND_POSTGRES_DB:-playground}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-10080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-desktopapp}:${POSTGRES_PASSWORD:-desktopapp}@db:5432/${POSTGRES_DB:-desktopapp}
+      REDIS_URL: redis://redis:6379/0
+      PIPELINE_ROOT: /app/pipeline
+      PIPELINE_RUNS_DIR: /app/pipeline/runs
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-20241022}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      GOOGLE_TTS_CREDENTIALS: /app/secrets/google-tts.json
+    volumes:
+      - pipeline_runs:/app/pipeline/runs
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  playground-api:
+    build:
+      context: .
+      dockerfile: ./playground/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_POSTGRES_USER:-playground}:${PLAYGROUND_POSTGRES_PASSWORD:-playground}@playground-db:5432/${PLAYGROUND_POSTGRES_DB:-playground}
+      PLAYGROUND_CORS_ORIGINS: ${PLAYGROUND_CORS_ORIGINS:-http://localhost:8080}
+      PIPELINE_ROOT: /app/pipeline
+      PLAYGROUND_RUNS_DIR: /app/playground-runs
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-20241022}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      GOOGLE_TTS_CREDENTIALS: /app/secrets/google-tts.json
+    volumes:
+      - playground_runs:/app/playground-runs
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      playground-db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-10080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-desktopapp}:${POSTGRES_PASSWORD:-desktopapp}@db:5432/${POSTGRES_DB:-desktopapp}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-3}
+      PIPELINE_ROOT: /app/pipeline
+      PIPELINE_RUNS_DIR: /app/pipeline/runs
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-20241022}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      GOOGLE_TTS_CREDENTIALS: /app/secrets/google-tts.json
+    volumes:
+      - pipeline_runs:/app/pipeline/runs
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    build:
+      context: .
+      dockerfile: ./nginx/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      - backend
+      - playground-api
+
+volumes:
+  postgres_data:
+  redis_data:
+  pipeline_runs:
+  playground_postgres_data:
+  playground_runs:

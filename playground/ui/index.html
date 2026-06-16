@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Agent Playground</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #020713, #071a37 58%, #000);
+        color: #ecf6ff;
+        font-family: Arial, sans-serif;
+      }
+
+      .boot-fallback {
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .boot-card {
+        max-width: 560px;
+        border: 1px solid rgba(164, 210, 255, 0.18);
+        border-radius: 24px;
+        background: rgba(8, 23, 50, 0.84);
+        padding: 28px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.34);
+      }
+
+      .boot-card strong {
+        color: #70ffd7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot-fallback">
+        <div class="boot-card">
+          <h1>Loading AI Agent Playground...</h1>
+          <p>
+            If this message stays visible, the browser did not load the built
+            JavaScript bundle. Open <strong>http://localhost:8080/playground/</strong>
+            from Docker/Nginx, then rebuild the global Nginx image if needed.
+          </p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

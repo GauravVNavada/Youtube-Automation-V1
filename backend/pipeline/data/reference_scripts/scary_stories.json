@@ -1,0 +1,14 @@
+[
+  {
+    "title": "This Family Found A Sealed Room",
+    "hook_type": "question + time_reference",
+    "script": "A family bought their dream home, but one room had been sealed for 40 years. Inside, the bed was still made, toys were still on the floor, and four words were scratched into the wall.",
+    "why_it_worked": "Escalating reveals, specific details, and a final open-ended scare."
+  },
+  {
+    "title": "Girl Home Alone Hears Knocks",
+    "hook_type": "second_person_time",
+    "script": "At night, a girl hears knocking that moves from the front door to inside the house. Every sound gets closer until the reveal changes the meaning of the first knock.",
+    "why_it_worked": "Simple visual progression and strong sound-based suspense."
+  }
+]

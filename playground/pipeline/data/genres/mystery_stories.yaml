@@ -1,0 +1,16 @@
+genre_id: mystery_stories
+display_name: Mystery Stories
+word_count_min: 75
+word_count_max: 135
+tone: curious, tense, clue-driven, grounded, final reveal
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 0.94
+music_mood: suspense
+hook_patterns:
+  - "The clue was sitting in plain sight."
+  - "Everyone missed one detail in {place}."
+banned_phrases:
+  - "Hey guys"
+  - "Like and subscribe"
+  - "This is insane"

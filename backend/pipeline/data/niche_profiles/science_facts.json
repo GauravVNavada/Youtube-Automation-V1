@@ -1,0 +1,19 @@
+{
+  "genre_id": "science_facts",
+  "display_name": "Science Facts",
+  "hook_templates": [
+    "Your brain does {detail} before you notice.",
+    "This simple object explains {subject}.",
+    "The weird science detail is {detail}."
+  ],
+  "tone_rules": [
+    "Simple explainer with one vivid everyday example.",
+    "Use cause and effect instead of dense terminology.",
+    "End with a clean takeaway."
+  ],
+  "title_words": ["brain", "trick", "hidden", "why", "tiny", "weird"],
+  "thumbnail_text_rules": ["Use a mystery-style question phrase.", "Keep technical words out of the thumbnail."],
+  "visual_keywords": ["human brain model", "lab table", "close up eye", "water glass", "microscope", "school science"],
+  "hashtag_hints": ["#shorts", "#science", "#facts"]
+}
+

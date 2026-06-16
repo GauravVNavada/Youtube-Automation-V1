@@ -1,0 +1,19 @@
+{
+  "genre_id": "scary_stories",
+  "display_name": "Scary Stories",
+  "hook_templates": [
+    "At {time}, {subject} noticed {detail}.",
+    "You heard {sound}. Then it answered.",
+    "The first warning was {detail}."
+  ],
+  "tone_rules": [
+    "Slow dread with one concrete detail per sentence.",
+    "Use a final reveal that feels possible, not random.",
+    "Avoid comedy and avoid explaining the monster."
+  ],
+  "title_words": ["sealed", "hidden", "knock", "room", "warning", "alone"],
+  "thumbnail_text_rules": ["Use 2-4 words.", "Use one scary object or action.", "Avoid full sentences."],
+  "visual_keywords": ["dark hallway", "old door", "phone screen", "shadow figure", "abandoned room", "mirror"],
+  "hashtag_hints": ["#shorts", "#scary", "#horror"]
+}
+

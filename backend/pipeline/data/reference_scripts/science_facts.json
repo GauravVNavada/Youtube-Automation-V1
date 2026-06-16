@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Why Your Brain Fills Gaps",
+    "hook_type": "body_mystery",
+    "script": "Your brain hides a blind spot in each eye. You do not see a black hole because your brain guesses what should be there. Most of the time it is right, which means part of what you see is actually a prediction.",
+    "why_it_worked": "It explains a surprising fact with a visual everyday example."
+  },
+  {
+    "title": "The Cold Spoon Trick",
+    "hook_type": "everyday_object",
+    "script": "A metal spoon feels colder than a wooden spoon in the same room. It is not colder. Metal pulls heat from your fingers faster, so your skin reports a stronger chill. Your hand is measuring heat flow, not temperature.",
+    "why_it_worked": "A common object makes the science feel immediate."
+  },
+  {
+    "title": "Why Soap Works",
+    "hook_type": "simple_explainer",
+    "script": "Soap has one side that likes water and one side that likes oil. When you wash your hands, it grabs oily dirt on one end and water on the other. That tiny double personality is why dirt slides away.",
+    "why_it_worked": "Friendly language turns chemistry into an easy visual metaphor."
+  }
+]

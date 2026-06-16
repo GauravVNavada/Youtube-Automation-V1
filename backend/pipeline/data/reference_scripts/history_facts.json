@@ -1,0 +1,20 @@
+[
+  {
+    "title": "The Door That Saved A City",
+    "hook_type": "misremembered_detail",
+    "script": "People remember the battle, but not the locked side door. One tired guard forgot to bar it before sunrise. That small mistake changed where the soldiers entered, how fast the city fell, and why the map looked different a year later.",
+    "why_it_worked": "It turns a large historical event into one concrete visual detail."
+  },
+  {
+    "title": "The Emperor's Quiet Rule",
+    "hook_type": "small_decision_big_effect",
+    "script": "An emperor once changed the tax date by only a few weeks. Farmers suddenly had time to sell their harvest first. The treasury earned more, rebellions slowed, and one boring calendar rule kept an empire calmer than an army could.",
+    "why_it_worked": "A simple cause-and-effect chain makes history easy to understand."
+  },
+  {
+    "title": "The Letter Nobody Opened",
+    "hook_type": "hidden_document",
+    "script": "A peace letter sat unopened on a clerk's desk for days. By the time it reached the palace, troops had already crossed the river. The strange part is that both sides later claimed they never wanted the fight to start.",
+    "why_it_worked": "A document delay creates suspense and a clean historical twist."
+  }
+]

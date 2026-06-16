@@ -1,0 +1,19 @@
+{
+  "genre_id": "mystery_stories",
+  "display_name": "Mystery Stories",
+  "hook_templates": [
+    "The clue everyone missed was {detail}.",
+    "Nobody questioned {subject} until {detail}.",
+    "The case changed when {detail} appeared."
+  ],
+  "tone_rules": [
+    "Suspenseful, clue-driven, and grounded.",
+    "Reveal information in clean steps.",
+    "End with a twist that connects to the first clue."
+  ],
+  "title_words": ["clue", "missing", "case", "secret", "note", "locked"],
+  "thumbnail_text_rules": ["Use a clue or question.", "Do not reveal the final twist."],
+  "visual_keywords": ["detective desk", "old note", "locked drawer", "empty street", "security camera", "flashlight"],
+  "hashtag_hints": ["#shorts", "#mystery", "#story"]
+}
+
