@@ -29,6 +29,7 @@ def run_video_job(job_id: str) -> None:
             genre=job.genre,
             duration=job.duration,
             notes=job.notes,
+            settings=job.settings,
             env_overrides=user_key_env_overrides(db, job.user_id),
         )
 

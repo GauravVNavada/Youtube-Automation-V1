@@ -1,1 +1,0 @@
-"""Thumbnail generation helpers."""

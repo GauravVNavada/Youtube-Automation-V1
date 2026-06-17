@@ -24,7 +24,9 @@ from app.schemas import (
 from app.services.agent_contracts import build_agent_contracts
 from app.services.api_keys import api_key_statuses, llm_options, save_user_api_key
 from app.services.generation_settings import normalize_generation_settings
+from app.services.master_agent import gemini_provider_for_user
 from app.services.queue import get_calibration_queue
+from desktop_pipeline.style_sampler_agent import build_style_profiles, style_profile_to_notes
 
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
@@ -118,17 +120,41 @@ def start_calibration(
     state.step = "calibration"
     chat = _active_chat(db, user, state)
     settings = normalize_generation_settings(payload.settings.model_dump())
+    genre = db.get(Genre, payload.genre_id)
+    provider = gemini_provider_for_user(db, user.id)
+    style_profiles = build_style_profiles(
+        payload.user_intent,
+        payload.genre_id,
+        genre.tone if genre else "",
+        provider=provider,
+    )
     jobs: list[VideoJob] = []
-    for index in range(1, 4):
+    for index, profile in enumerate(style_profiles[:3], start=1):
+        profile_dict = profile.to_dict()
+        job_settings = normalize_generation_settings(
+            {
+                **settings,
+                "sample_index": index,
+                "source_prompt": payload.user_intent,
+                "style_profile": profile_dict,
+                "agent_instructions": {
+                    "script_agent": profile.script_angle,
+                    "asset_agent": profile.visual_style,
+                    "audio_agent": profile.audio_style,
+                    "caption_agent": profile.caption_style,
+                },
+            }
+        )
         job = VideoJob(
             user_id=user.id,
             chat_id=chat.id,
             topic=f"{payload.user_intent} sample {index}",
             genre=payload.genre_id,
-            duration=int(settings["duration"]),
-            settings={**settings, "sample_index": index},
+            duration=int(job_settings["duration"]),
+            notes=style_profile_to_notes(profile),
+            settings=job_settings,
             job_type="calibration_sample",
-            planned_agents=build_agent_contracts(settings, genre_id=payload.genre_id, duration=int(settings["duration"])),
+            planned_agents=build_agent_contracts(job_settings, genre_id=payload.genre_id, duration=int(job_settings["duration"])),
         )
         db.add(job)
         jobs.append(job)

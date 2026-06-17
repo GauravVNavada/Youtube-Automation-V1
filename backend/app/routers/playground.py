@@ -150,7 +150,7 @@ STDOUT_STAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 def _project_root() -> Path:
     for parent in Path(__file__).resolve().parents:
-        if (parent / "pipeline" / "main.py").exists():
+        if (parent / "final_pipeline" / "main.py").exists():
             return parent
     return Path(__file__).resolve().parents[3]
 
@@ -159,7 +159,7 @@ def _pipeline_root() -> Path:
     configured = os.getenv("PLAYGROUND_PIPELINE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return _project_root() / "pipeline"
+    return _project_root() / "final_pipeline"
 
 
 def _pipeline_data_dir() -> Path:
@@ -210,12 +210,16 @@ def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
         return _render_prompt_module("agents.prompts.asset_prompts", fallback)
     if stage_id == "master_agent":
         master_prompt = _render_prompt_module("agents.prompts.master_prompts", "")
+        desktop_prompt = _desktop_agent_prompt_text()
         if master_prompt:
             return (
                 "Playground bootstrap is deterministic, so no LLM prompt is sent for this stage.\n\n"
                 "Prompt-based master planning module available:\n\n"
                 f"{master_prompt}"
+                f"{desktop_prompt}"
             )
+        if desktop_prompt:
+            return f"{fallback}{desktop_prompt}"
     if stage_id in {"audio_agent", "caption_agent", "render_agent", "thumbnail_agent", "final_output"}:
         return f"{fallback}\n\nThis stage is deterministic or provider-specific and does not send an agent prompt."
     if stage_id == "timed_visual_agent":
@@ -223,6 +227,24 @@ def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
     if stage_id in {"topic_discovery_agent", "research_agent"}:
         return f"{fallback}\n\nThis stage uses deterministic grounding/research helpers plus source lookups, not an agents/prompts LLM prompt."
     return fallback
+
+
+def _desktop_agent_prompt_text() -> str:
+    sections = []
+    try:
+        from desktop_pipeline.message_base import render_messages_for_single_prompt
+        from desktop_pipeline import master_agent, parameter_agent, style_sampler_agent
+
+        for title, module in (
+            ("Desktop Master Agent", master_agent),
+            ("Desktop Style Sampler Agent", style_sampler_agent),
+            ("Desktop Parameter Agent", parameter_agent),
+        ):
+            if hasattr(module, "messages_base"):
+                sections.append(f"\n\n--- {title} Examples ---\n\n{render_messages_for_single_prompt(module.messages_base())}")
+    except Exception as exc:
+        sections.append(f"\n\nDesktop agent examples could not be loaded: {type(exc).__name__}: {exc}")
+    return "".join(sections)
 
 
 def _run_path(run_id: str) -> Path:

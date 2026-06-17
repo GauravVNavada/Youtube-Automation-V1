@@ -25,6 +25,7 @@ def generate_video(
     chat = _active_chat(db, user, state)
     settings = normalize_generation_settings(payload.settings.model_dump())
     topic = payload.topic.strip() or state.user_intent or "grounded short video"
+    settings["source_prompt"] = topic
     job = VideoJob(
         user_id=user.id,
         chat_id=chat.id,

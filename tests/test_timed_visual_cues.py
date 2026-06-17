@@ -8,7 +8,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PIPELINE = ROOT / "pipeline"
+PIPELINE = ROOT / "final_pipeline"
 if str(PIPELINE) not in sys.path:
     sys.path.insert(0, str(PIPELINE))
 
@@ -481,7 +481,7 @@ class TimedVisualCueTests(unittest.TestCase):
         caption_text = first_dialogue.rsplit(",,", 1)[-1]
         self.assertEqual(caption_text.count(r"\N"), 1)
         self.assertNotIn("SLOWLY", caption_text)
-        self.assertIn(r"\fs68", first_dialogue)
+        self.assertIn(r"\fs76", first_dialogue)
 
 
 if __name__ == "__main__":
