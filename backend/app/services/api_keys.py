@@ -18,6 +18,7 @@ PROVIDER_ENV_KEYS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "pexels": "PEXELS_API_KEY",
     "pixabay": "PIXABAY_API_KEY",
+    "unsplash": "UNSPLASH_ACCESS_KEY",
     "google_tts": "GOOGLE_TTS_CREDENTIALS",
 }
 
@@ -121,6 +122,7 @@ def _settings_value(settings, provider: str) -> str:
         "anthropic": settings.anthropic_api_key,
         "pexels": settings.pexels_api_key,
         "pixabay": settings.pixabay_api_key,
+        "unsplash": settings.unsplash_access_key,
         "google_tts": settings.google_tts_credentials,
     }.get(provider, "")
 

@@ -1,6 +1,8 @@
 import json
 from typing import Dict, List
 
+from modules.llm.json_utils import parse_llm_json
+
 from agents.prompts.message_base import (
     append_user_message,
     base_messages,
@@ -10,7 +12,7 @@ from agents.prompts.message_base import (
 
 
 MAX_INPUT_CHARS = 500
-MAX_OUTPUT_TOKENS = 80
+MAX_OUTPUT_TOKENS = 160
 
 
 SYSTEM_PROMPT = """
@@ -26,6 +28,9 @@ INPUT_FORMAT:
   "raw_query": "Original visual cue from the script.",
   "genre_id": "Genre id.",
   "mood": "Cue mood.",
+  "subject_lock": false,
+  "required_subjects": ["Named entity that must remain visible, if any."],
+  "aliases": ["Allowed aliases for the named entity."],
   "failure_reason": "Why the previous search failed, if known."
 }
 
@@ -43,6 +48,8 @@ Hard rules:
 - reason must be one short sentence.
 - Output must be valid JSON with only the keys query and reason.
 - Do not include markdown, bullets, explanations, or extra fields.
+- If subject_lock is true, the query must include the required subject or one of its aliases.
+- If subject_lock is true, do not replace the named subject with a generic category.
 
 Prefer:
 - people + object + setting: "woman reading letter kitchen"
@@ -209,6 +216,9 @@ def build_user_input(
     genre_id: str,
     mood: str = "",
     failure_reason: str = "",
+    subject_lock: bool = False,
+    required_subjects: list[str] | None = None,
+    aliases: list[str] | None = None,
 ) -> str:
     """
     Build the final compact JSON user message.
@@ -220,6 +230,9 @@ def build_user_input(
         "raw_query": clean_text(raw_query, 180),
         "genre_id": clean_text(genre_id, 80),
         "mood": clean_text(mood, 60),
+        "subject_lock": bool(subject_lock),
+        "required_subjects": [clean_text(item, 80) for item in (required_subjects or [])[:3] if clean_text(item, 80)],
+        "aliases": [clean_text(item, 80) for item in (aliases or [])[:5] if clean_text(item, 80)],
         "failure_reason": clean_text(failure_reason, 120),
     }
 
@@ -260,6 +273,9 @@ def build_user_input(
             "raw_query": clean_text(raw_query, 30),
             "genre_id": clean_text(genre_id, 20),
             "mood": "",
+            "subject_lock": bool(subject_lock),
+            "required_subjects": [clean_text(item, 60) for item in (required_subjects or [])[:1] if clean_text(item, 60)],
+            "aliases": [],
             "failure_reason": "",
         },
         ensure_ascii=False,
@@ -272,6 +288,9 @@ def messages_with_user(
     genre_id: str,
     mood: str = "",
     failure_reason: str = "",
+    subject_lock: bool = False,
+    required_subjects: list[str] | None = None,
+    aliases: list[str] | None = None,
 ) -> List[Dict[str, str]]:
     """
     Return complete message list ready to send to the model.
@@ -283,6 +302,9 @@ def messages_with_user(
             genre_id=genre_id,
             mood=mood,
             failure_reason=failure_reason,
+            subject_lock=subject_lock,
+            required_subjects=required_subjects,
+            aliases=aliases,
         ),
         MAX_INPUT_CHARS,
     )
@@ -295,9 +317,9 @@ def parse_asset_query_response(response_text: str) -> Dict[str, str]:
     Raises ValueError if the response does not match the expected schema.
     """
     try:
-        data = json.loads(response_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Model response is not valid JSON: {exc}") from exc
+        data = parse_llm_json(response_text)
+    except Exception as exc:
+        raise ValueError(f"Model response is not valid JSON after repair attempts: {exc}") from exc
 
     if not isinstance(data, dict):
         raise ValueError("Model response must be a JSON object.")

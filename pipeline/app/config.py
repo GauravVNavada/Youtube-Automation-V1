@@ -27,6 +27,7 @@ class Settings:
     gemini_api_key: str = ""
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    unsplash_access_key: str = ""
     google_tts_credentials: str = ""
 
 
@@ -57,5 +58,6 @@ def get_settings() -> Settings:
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
         pexels_api_key=os.environ.get("PEXELS_API_KEY", ""),
         pixabay_api_key=os.environ.get("PIXABAY_API_KEY", ""),
+        unsplash_access_key=os.environ.get("UNSPLASH_ACCESS_KEY", ""),
         google_tts_credentials=os.environ.get("GOOGLE_TTS_CREDENTIALS", ""),
     )

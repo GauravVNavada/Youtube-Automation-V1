@@ -66,12 +66,6 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "prompt_text": "Write a clear, grounded short script with simple words, alert beats, and a complete ending.",
     },
     {
-        "id": "asset_agent",
-        "agent_name": "asset_agent",
-        "execution_mode": "hybrid",
-        "prompt_text": "Fetch or generate varied visuals. Use fallback images instead of repeating bad or missing assets.",
-    },
-    {
         "id": "audio_agent",
         "agent_name": "audio_agent",
         "execution_mode": "hybrid",
@@ -82,6 +76,18 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "agent_name": "caption_agent",
         "execution_mode": "deterministic",
         "prompt_text": "Build readable timed captions from word timestamps.",
+    },
+    {
+        "id": "timed_visual_agent",
+        "agent_name": "timed_visual_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Merge caption timing into visual windows and rewrite them into concrete asset searches.",
+    },
+    {
+        "id": "asset_agent",
+        "agent_name": "asset_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Fetch videos and images for each timed visual cue, then select the best non-repeating asset.",
     },
     {
         "id": "render_agent",
@@ -113,15 +119,16 @@ PIPELINE_STAGE_TO_VISIBLE = {
     "script_agent": "script_agent",
     "validate_script": "script_agent",
     "validate_script_result": "script_agent",
-    "asset_agent": "asset_agent",
-    "validate_assets": "asset_agent",
-    "validate_assets_result": "asset_agent",
     "audio_agent": "audio_agent",
     "validate_audio": "audio_agent",
     "validate_audio_result": "audio_agent",
     "caption_agent": "caption_agent",
     "validate_captions": "caption_agent",
     "validate_captions_result": "caption_agent",
+    "timed_visual_agent": "timed_visual_agent",
+    "asset_agent": "asset_agent",
+    "validate_assets": "asset_agent",
+    "validate_assets_result": "asset_agent",
     "render_agent": "render_agent",
     "validate_render": "render_agent",
     "validate_render_result": "render_agent",
@@ -132,9 +139,10 @@ STDOUT_STAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"Discovering grounded angle", re.I), "topic_discovery_agent"),
     (re.compile(r"Building research brief", re.I), "research_agent"),
     (re.compile(r"Generating script", re.I), "script_agent"),
-    (re.compile(r"Fetching assets", re.I), "asset_agent"),
     (re.compile(r"Generating audio", re.I), "audio_agent"),
     (re.compile(r"Building captions", re.I), "caption_agent"),
+    (re.compile(r"Building timed visual cues", re.I), "timed_visual_agent"),
+    (re.compile(r"Fetching assets", re.I), "asset_agent"),
     (re.compile(r"Rendering video", re.I), "render_agent"),
     (re.compile(r"Generating thumbnails", re.I), "thumbnail_agent"),
 )
@@ -210,6 +218,8 @@ def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
             )
     if stage_id in {"audio_agent", "caption_agent", "render_agent", "thumbnail_agent", "final_output"}:
         return f"{fallback}\n\nThis stage is deterministic or provider-specific and does not send an agent prompt."
+    if stage_id == "timed_visual_agent":
+        return f"{fallback}\n\nThis stage uses deterministic caption timing plus one best-effort batch LLM rewrite."
     if stage_id in {"topic_discovery_agent", "research_agent"}:
         return f"{fallback}\n\nThis stage uses deterministic grounding/research helpers plus source lookups, not an agents/prompts LLM prompt."
     return fallback
@@ -246,10 +256,6 @@ def list_llm_options() -> list[dict[str, Any]]:
     return [
         {"provider": "env", "label": "Docker / .env", "models": [], "default_model": ""},
         {"provider": "gemini", "label": "Google Gemini", "models": [settings.gemini_model], "default_model": settings.gemini_model},
-        {"provider": "groq", "label": "Groq", "models": [settings.groq_model], "default_model": settings.groq_model},
-        {"provider": "openai", "label": "OpenAI", "models": [settings.llm_model or "gpt-4o-mini"], "default_model": settings.llm_model or "gpt-4o-mini"},
-        {"provider": "anthropic", "label": "Anthropic", "models": [settings.anthropic_model], "default_model": settings.anthropic_model},
-        {"provider": "offline", "label": "Offline fallback", "models": ["local-template"], "default_model": "local-template"},
     ]
 
 
@@ -321,7 +327,9 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     now = _now()
     run_id = str(uuid4())
     genre = _genre_for(payload.genre_id)
-    route_summary = f"{genre['display_name']} pipeline run for: {payload.message}"
+    effective_message = _effective_message(payload)
+    effective_duration = _effective_duration(payload)
+    route_summary = f"{genre['display_name']} pipeline run for: {effective_message}"
     stages = [_initial_stage(stage, now) for stage in VISIBLE_STAGES]
     stages[0] = _mark_stage_dict(
         stages[0],
@@ -331,7 +339,9 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
         output_json={
             "route_summary": route_summary,
             "genre_id": genre["genre_id"],
-            "duration": payload.duration,
+            "duration": effective_duration,
+            "raw_message": payload.message,
+            "cleaned_message": effective_message,
             "selected_provider": payload.llm_provider,
             "selected_model": payload.llm_model or "environment default",
         },
@@ -340,9 +350,10 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "id": run_id,
-        "user_message": payload.message,
+        "user_message": effective_message,
+        "raw_user_message": payload.message,
         "genre_id": genre["genre_id"],
-        "duration": payload.duration,
+        "duration": effective_duration,
         "notes": payload.notes,
         "llm_provider": payload.llm_provider,
         "llm_model": payload.llm_model,
@@ -392,11 +403,11 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
             sys.executable,
             "main.py",
             "--topic",
-            payload.message,
+            _effective_message(payload),
             "--genre",
             payload.genre_id,
             "--duration",
-            str(_safe_duration(payload.duration)),
+            str(_effective_duration(payload)),
         ]
         if payload.notes:
             cmd.extend(["--notes", payload.notes])
@@ -459,35 +470,27 @@ def _pipeline_env(payload: PlaygroundRunCreate) -> dict[str, str]:
 
     provider = (payload.llm_provider or "env").strip().lower()
     if provider and provider != "env":
+        if provider not in {"gemini", "google"}:
+            raise ValueError("Only Gemini is supported for playground generation.")
         env["LLM_PROVIDER"] = provider
-    elif not _has_any_llm_key(env):
-        env["LLM_PROVIDER"] = "offline"
+    else:
+        env["LLM_PROVIDER"] = "gemini"
 
     if payload.llm_model:
         if provider == "gemini":
             env["GEMINI_MODEL"] = payload.llm_model
-        elif provider == "groq":
-            env["GROQ_MODEL"] = payload.llm_model
-        elif provider == "anthropic":
-            env["ANTHROPIC_MODEL"] = payload.llm_model
         else:
-            env["LLM_MODEL"] = payload.llm_model
+            env["GEMINI_MODEL"] = payload.llm_model
 
     api_key = payload.llm_api_key.strip()
     if api_key:
-        if provider == "gemini":
-            env["GEMINI_API_KEY"] = api_key
-        elif provider == "groq":
-            env["GROQ_API_KEY"] = api_key
-        elif provider == "anthropic":
-            env["ANTHROPIC_API_KEY"] = api_key
-        else:
-            env["LLM_API_KEY"] = api_key
+        env["LLM_PROVIDER"] = "gemini"
+        env["GEMINI_API_KEY"] = api_key
     return env
 
 
 def _has_any_llm_key(env: dict[str, str]) -> bool:
-    return any(env.get(name, "").strip() for name in ("LLM_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"))
+    return any(env.get(name, "").strip() for name in ("LLM_API_KEY", "GEMINI_API_KEY"))
 
 
 def _handle_pipeline_line(run_id: str, line: str) -> None:
@@ -654,6 +657,11 @@ def _collect_stage_artifacts(stage_id: str, run_dir: Path, log_dir: Path, output
         log_dir / "events.log",
     ]
     if stage_id == "asset_agent":
+        paths.append(log_dir / "asset_selection_trace.json")
+        if output_json.get("asset_trace_path"):
+            paths.append(Path(str(output_json.get("asset_trace_path"))))
+        if output_json.get("timed_visual_cues_path"):
+            paths.append(Path(str(output_json.get("timed_visual_cues_path"))))
         paths.extend(Path(path) for path in output_json.get("image_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("video_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("media_paths", []) if path)
@@ -661,6 +669,10 @@ def _collect_stage_artifacts(stage_id: str, run_dir: Path, log_dir: Path, output
         paths.extend(Path(path) for path in (output_json.get("narration_path"), output_json.get("final_audio_path")) if path)
     elif stage_id == "caption_agent":
         paths.extend(Path(path) for path in (output_json.get("srt_path"), output_json.get("ass_path")) if path)
+    elif stage_id == "timed_visual_agent":
+        paths.append(log_dir / "timed_visual_cues.json")
+        if isinstance(output_json, dict) and output_json.get("timed_visual_cues_path"):
+            paths.append(Path(str(output_json.get("timed_visual_cues_path"))))
     elif stage_id == "render_agent":
         paths.extend(Path(path) for path in (output_json.get("video_path"), str(run_dir / "output" / "final_audio_check.wav")) if path)
     elif stage_id == "thumbnail_agent":
@@ -682,6 +694,8 @@ def _collect_final_artifacts(run: dict[str, Any]) -> list[dict[str, Any]]:
                 run_dir / "output" / "final_audio_check.wav",
                 run_dir / "output" / "thumbnails" / "shorts_cover.jpg",
                 run_dir / "output" / "thumbnails" / "youtube_thumbnail.jpg",
+                run_dir / "logs" / "timed_visual_agent" / "timed_visual_cues.json",
+                run_dir / "logs" / "asset_agent" / "asset_selection_trace.json",
                 run_dir / "errors" / "error.json",
             ]
         )
@@ -877,13 +891,45 @@ def _broken_run_summary(path: Path, exc: Exception) -> dict[str, Any]:
 def _safe_payload(payload: PlaygroundRunCreate) -> dict[str, Any]:
     data = payload.model_dump()
     data["llm_api_key"] = "provided" if payload.llm_api_key.strip() else ""
+    data["effective_message"] = _effective_message(payload)
+    data["effective_duration"] = _effective_duration(payload)
     return data
+
+
+def _effective_duration(payload: PlaygroundRunCreate) -> int:
+    return _duration_from_text(payload.message) or _safe_duration(payload.duration)
+
+
+def _effective_message(payload: PlaygroundRunCreate) -> str:
+    return _strip_duration_instruction(payload.message)
 
 
 def _safe_duration(duration: int) -> int:
     if duration in {30, 45, 60}:
         return duration
     return 30
+
+
+def _duration_from_text(text: str) -> int | None:
+    patterns = (
+        r"\bduration\s*(?:of|for|is|:|=|,|-)?\s*(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b",
+        r"\b(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, str(text or ""), flags=re.I)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _strip_duration_instruction(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(r"\b(?:keep|set|use|with)?\s*(?:the\s+)?duration\s*(?:of|for|to|is|:|=|,|-)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:keep|set|use)\s+(?:it\s+)?(?:for|to)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use)\b\s*$", " ", cleaned, flags=re.I)
+    return " ".join(cleaned.split()).strip(" ,.;")
 
 
 def _genre_for(genre_id: str) -> dict[str, Any]:

@@ -9,6 +9,26 @@ class ImageCue:
     keyword: str
     timestamp_hint: str
     mood: str = "neutral"
+    role: str = "supporting_visual"
+    subject_lock: bool = False
+    required_subjects: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    allowed_fallback_level: str = "generic_scene"
+
+
+@dataclass
+class TimedVisualCue:
+    start_ms: int
+    end_ms: int
+    text: str
+    search_query: str
+    subject_lock: bool = False
+    required_subjects: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    role: str = "timed_segment"
+    mood: str = "neutral"
+    allowed_fallback_level: str = "generic_scene"
+    source: str = "caption_timing"
 
 
 @dataclass
@@ -58,6 +78,14 @@ class AssetBundle:
     media_paths: list[str] = field(default_factory=list)
     media_types: list[str] = field(default_factory=list)
     stock_video_search_terms: list[str] = field(default_factory=list)
+    subject_lock_issues: list[str] = field(default_factory=list)
+    asset_selection_trace: list[dict[str, Any]] = field(default_factory=list)
+    asset_trace_path: str = ""
+    media_start_ms: list[int] = field(default_factory=list)
+    media_end_ms: list[int] = field(default_factory=list)
+    media_durations_ms: list[int] = field(default_factory=list)
+    timed_visual_cues: list[TimedVisualCue] = field(default_factory=list)
+    timed_visual_cues_path: str = ""
 
 
 @dataclass

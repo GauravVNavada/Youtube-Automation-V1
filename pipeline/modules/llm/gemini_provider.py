@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
-import re
-
+from modules.llm.json_utils import parse_llm_json
 from modules.llm.providers import LLMProvider
 
 
@@ -44,10 +42,4 @@ class GeminiProvider(LLMProvider):
 
 
 def _parse_json(text: str) -> dict:
-    cleaned = text.strip()
-    cleaned = re.sub(r"```(?:json)?|```", "", cleaned).strip()
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start >= 0 and end >= start:
-        cleaned = cleaned[start : end + 1]
-    return json.loads(cleaned)
+    return parse_llm_json(text)

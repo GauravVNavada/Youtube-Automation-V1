@@ -67,6 +67,8 @@ def _local_research_results(
         ),
     ]
     for ref in reference_scripts[:8]:
+        if not _reference_matches_topic(ref, topic):
+            continue
         facts = ref.get("facts") if isinstance(ref.get("facts"), list) else []
         fact_text = " ".join(str(fact) for fact in facts[:3])
         snippet = " ".join(
@@ -89,8 +91,14 @@ def _local_research_results(
 
 
 def _is_relevant_source(result: SearchResult, topic: str, grounding_plan: dict[str, Any]) -> bool:
+    if result.source == "local_profile":
+        return False
     if result.source.startswith("local"):
-        return True
+        haystack = f"{result.title} {result.snippet}".lower()
+        required = [str(term).lower() for term in grounding_plan.get("required_terms", []) if len(str(term)) >= 3]
+        if not required:
+            required = keywords_from_text(topic, 6)
+        return not required or any(term in haystack for term in required)
     haystack = f"{result.title} {result.snippet}".lower()
     if any(str(term).lower() in haystack for term in grounding_plan.get("excluded_terms", [])):
         return False
@@ -98,6 +106,22 @@ def _is_relevant_source(result: SearchResult, topic: str, grounding_plan: dict[s
     if not required:
         required = keywords_from_text(topic, 6)
     return not required or any(term in haystack for term in required)
+
+
+def _reference_matches_topic(ref: dict[str, Any], topic: str) -> bool:
+    topic_terms = set(keywords_from_text(topic, 10))
+    if not topic_terms:
+        return False
+    haystack = " ".join(
+        [
+            str(ref.get("title") or ""),
+            str(ref.get("real_world_anchor") or ""),
+            " ".join(str(fact) for fact in ref.get("facts", []) if isinstance(ref.get("facts"), list)),
+            str(ref.get("script") or ref.get("full_script") or ""),
+            " ".join(str(word) for word in ref.get("visual_keywords", []) if isinstance(ref.get("visual_keywords"), list)),
+        ]
+    )
+    return bool(topic_terms.intersection(keywords_from_text(haystack, 40)))
 
 
 def _to_research_sources(results: list[SearchResult]) -> list[ResearchSource]:

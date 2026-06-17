@@ -32,7 +32,7 @@ class ValidationAgent(BaseAgent):
         return result
 
     def validate_assets(self, assets: AssetBundle) -> ValidationResult:
-        issues = []
+        issues = list(assets.subject_lock_issues)
         media_paths = assets.media_paths or assets.image_paths
         if len(media_paths) < 3:
             issues.append("At least 3 visual media assets are required")
@@ -45,6 +45,23 @@ class ValidationAgent(BaseAgent):
         for path in assets.video_paths:
             if not Path(path).exists():
                 issues.append(f"Missing video: {path}")
+        if assets.media_durations_ms:
+            if len(assets.media_durations_ms) != len(assets.media_paths):
+                issues.append("Timed media durations must match media_paths")
+            if len(assets.media_start_ms) != len(assets.media_paths) or len(assets.media_end_ms) != len(assets.media_paths):
+                issues.append("Timed media start/end lists must match media_paths")
+            previous_end = -1
+            for index, duration_ms in enumerate(assets.media_durations_ms):
+                if int(duration_ms) <= 0:
+                    issues.append(f"Timed media duration must be positive at index {index}")
+                if index < len(assets.media_start_ms) and index < len(assets.media_end_ms):
+                    start_ms = int(assets.media_start_ms[index])
+                    end_ms = int(assets.media_end_ms[index])
+                    if end_ms <= start_ms:
+                        issues.append(f"Timed media end must be after start at index {index}")
+                    if previous_end > start_ms:
+                        issues.append(f"Timed media windows overlap at index {index}")
+                    previous_end = end_ms
         return ValidationResult(passed=not issues, issues=issues)
 
     def validate_audio(self, audio: AudioBundle) -> ValidationResult:

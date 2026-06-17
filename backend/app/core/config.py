@@ -39,6 +39,7 @@ class Settings:
     gemini_model: str = "gemini-2.5-flash"
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    unsplash_access_key: str = ""
     google_tts_credentials: str = ""
     worker_autorun_jobs: bool = False
 
@@ -77,6 +78,7 @@ def get_settings() -> Settings:
         gemini_model=_env("GEMINI_MODEL", "gemini-2.5-flash"),
         pexels_api_key=_env("PEXELS_API_KEY", ""),
         pixabay_api_key=_env("PIXABAY_API_KEY", ""),
+        unsplash_access_key=_env("UNSPLASH_ACCESS_KEY", ""),
         google_tts_credentials=_env("GOOGLE_TTS_CREDENTIALS", ""),
         worker_autorun_jobs=_bool_env("WORKER_AUTORUN_JOBS", False),
     )

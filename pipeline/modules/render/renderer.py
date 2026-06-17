@@ -17,6 +17,7 @@ def render_video(
     music_path: str | None = None,
     media_paths: list[str] | None = None,
     media_types: list[str] | None = None,
+    media_durations_ms: list[int] | None = None,
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
@@ -48,6 +49,7 @@ def render_video(
             width=width,
             height=height,
             fps=fps,
+            media_durations_ms=media_durations_ms,
         )
     else:
         cmd = build_image_slideshow_command(

@@ -63,7 +63,12 @@ OUTPUT_FORMAT:
     {
       "keyword": "concrete subject object setting",
       "timestamp_hint": "word_0",
-      "mood": "dark|eerie|dramatic|neutral|reveal"
+      "mood": "dark|eerie|dramatic|neutral|reveal",
+      "role": "primary_subject|background|evidence|setting",
+      "subject_lock": false,
+      "required_subjects": [],
+      "aliases": [],
+      "allowed_fallback_level": "exact_subject|subject_alias|generic_scene|abstract_symbolic|text_card"
     }
   ],
   "sfx_cues": [
@@ -77,7 +82,8 @@ OUTPUT_FORMAT:
 }
 
 Hard rules:
-- Output must be valid JSON with only the keys in OUTPUT_FORMAT.
+- Output must be valid JSON with only the top-level keys in OUTPUT_FORMAT.
+- New image_cues should include the subject-lock fields shown in OUTPUT_FORMAT. Older examples may omit them only as legacy shape.
 - Stay within genre.word_count_min and genre.word_count_max when provided.
 - If no word range is provided, match duration_seconds naturally.
 - The first sentence must hook fast.
@@ -95,6 +101,9 @@ Hard rules:
 - Avoid generic filler.
 - Avoid fake specificity.
 - Avoid unrelated sources just because they share one word with the topic.
+- Never copy the few-shot examples as the answer. They show format only.
+- If the user asks for a named subject, the script must be about that named subject and must mention it or a clear alias naturally.
+- Do not treat duration, platform, genre, or formatting instructions as visual subjects.
 
 Grounding rules:
 - Treat local database/reference scripts as inspiration for pacing, structure, hooks, and visual style; do not copy their exact words unless useful.
@@ -129,6 +138,11 @@ Image cue rules:
 - Avoid copyrighted character names unless the video is factual about that character or public-domain.
 - Avoid brand names unless the brand itself is essential and factual.
 - Use only these image cue moods: dark, eerie, dramatic, neutral, reveal.
+- When a visual cue is about a specific named subject, fallback may reduce visual specificity but must not change the subject.
+- If the video topic is a specific person, character, product, brand, place, event, team, film, game, landmark, or object, mark the main-subject cues with subject_lock true.
+- For subject_lock true, include the exact required subject in required_subjects and useful aliases in aliases.
+- Subject-locked cues must not be replaced by category-related or generic scene footage. Use allowed_fallback_level exact_subject, subject_alias, abstract_symbolic, or text_card.
+- Supporting/background cues may use subject_lock false and allowed_fallback_level generic_scene.
 
 SFX cue rules:
 - sfx_cues may be empty if sound effects would be distracting.
@@ -285,7 +299,17 @@ EXPECTED_OUTPUT_KEYS = {
     "emphasis_words",
 }
 
-IMAGE_CUE_KEYS = {"keyword", "timestamp_hint", "mood"}
+IMAGE_CUE_KEYS = {
+    "keyword",
+    "timestamp_hint",
+    "mood",
+    "role",
+    "subject_lock",
+    "required_subjects",
+    "aliases",
+    "allowed_fallback_level",
+}
+LEGACY_IMAGE_CUE_KEYS = {"keyword", "timestamp_hint", "mood"}
 SFX_CUE_KEYS = {"trigger_word", "sfx_type", "timestamp_hint"}
 ALLOWED_IMAGE_MOODS = {"dark", "eerie", "dramatic", "neutral", "reveal"}
 
@@ -588,9 +612,10 @@ def validate_script_plan_response(
         if not isinstance(cue, dict):
             raise ValueError("Each image cue must be an object.")
 
-        if set(cue.keys()) != IMAGE_CUE_KEYS:
+        cue_keys = set(cue.keys())
+        if cue_keys not in {IMAGE_CUE_KEYS, LEGACY_IMAGE_CUE_KEYS}:
             raise ValueError(
-                f"Each image cue must contain exactly {IMAGE_CUE_KEYS}, got {set(cue.keys())}."
+                f"Each image cue must contain either {IMAGE_CUE_KEYS} or legacy {LEGACY_IMAGE_CUE_KEYS}, got {cue_keys}."
             )
 
         keyword = cue["keyword"]
@@ -616,6 +641,20 @@ def validate_script_plan_response(
             raise ValueError(
                 f"image_cue.mood must be one of {ALLOWED_IMAGE_MOODS}, got {mood!r}."
             )
+
+        if cue_keys == IMAGE_CUE_KEYS:
+            if not isinstance(cue["role"], str) or not cue["role"].strip():
+                raise ValueError("image_cue.role must be a non-empty string.")
+            if not isinstance(cue["subject_lock"], bool):
+                raise ValueError("image_cue.subject_lock must be a boolean.")
+            if not isinstance(cue["required_subjects"], list):
+                raise ValueError("image_cue.required_subjects must be a list.")
+            if not isinstance(cue["aliases"], list):
+                raise ValueError("image_cue.aliases must be a list.")
+            if not isinstance(cue["allowed_fallback_level"], str) or not cue["allowed_fallback_level"].strip():
+                raise ValueError("image_cue.allowed_fallback_level must be a non-empty string.")
+            if cue["subject_lock"] and not any(str(item).strip() for item in cue["required_subjects"]):
+                raise ValueError("subject-locked image cues must include required_subjects.")
 
     if not isinstance(sfx_cues, list):
         raise ValueError("sfx_cues must be a list.")

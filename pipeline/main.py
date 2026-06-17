@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from agents.render_agent import RenderAgent
 from agents.research_agent import ResearchAgent
 from agents.script_agent import ScriptAgent
 from agents.thumbnail_agent import ThumbnailAgent
+from agents.timed_visual_agent import TimedVisualAgent
 from agents.topic_discovery_agent import TopicDiscoveryAgent
 from agents.validation_agent import ValidationAgent
 from app.config import get_settings
@@ -30,15 +32,17 @@ def main() -> int:
     parser.add_argument("--duration", type=int, default=45, choices=[30, 45, 60])
     parser.add_argument("--notes", default="", help="Optional user style notes")
     args = parser.parse_args()
+    topic = strip_duration_instruction(args.topic)
+    duration = duration_from_topic(args.topic) or args.duration
 
     settings = get_settings()
     ensure_data_dirs()
     run_dir = create_run_dir()
     errors = ErrorLogger(run_dir)
     context = PipelineContext(
-        topic=args.topic,
+        topic=topic,
         genre_id=args.genre,
-        duration=args.duration,
+        duration=duration,
         run_dir=str(run_dir),
         user_notes=args.notes,
     )
@@ -83,12 +87,12 @@ def main() -> int:
         )
 
         print(f"[run] {run_dir}")
-        print("[1/9] Discovering grounded angle...")
+        print("[1/10] Discovering grounded angle...")
         discovery = run_stage(
             errors,
             "topic_discovery_agent",
             lambda: TopicDiscoveryAgent(run_dir).run(
-                topic=args.topic,
+                topic=topic,
                 genre=genre,
                 reference_scripts=references,
                 provider=provider,
@@ -96,12 +100,12 @@ def main() -> int:
             context=context,
         )
 
-        print("[2/9] Building research brief...")
+        print("[2/10] Building research brief...")
         research = run_stage(
             errors,
             "research_agent",
             lambda: ResearchAgent(run_dir).run(
-                topic=args.topic,
+                topic=topic,
                 genre=genre,
                 discovery=discovery,
                 reference_scripts=references,
@@ -109,16 +113,17 @@ def main() -> int:
             context=context,
         )
         growth_context = GrowthContext(topic_discovery=discovery, research=research, notes=args.notes)
+        script_topic = combine_topic_and_angle(topic, discovery.selected_topic)
 
-        print("[3/9] Generating script...")
+        print("[3/10] Generating script...")
         script = run_stage(
             errors,
             "script_agent",
             lambda: ScriptAgent(run_dir).run(
                 provider=provider,
-                topic=discovery.selected_topic,
+                topic=script_topic,
                 genre=genre,
-                duration=args.duration,
+                duration=duration,
                 reference_scripts=references,
                 user_notes=args.notes,
                 growth_context=growth_context,
@@ -140,52 +145,20 @@ def main() -> int:
             context={"issues": script_check.issues},
         )
 
-        print("[4/9] Fetching assets...")
-        assets = run_stage(
-            errors,
-            "asset_agent",
-            lambda: AssetAgent(run_dir).run(
-                script.image_cues,
-                script.sfx_cues,
-                genre,
-                pexels_key=settings.pexels_api_key,
-                pixabay_key=settings.pixabay_api_key,
-                provider=provider,
-            ),
-            context={
-                "image_cues": script.image_cues,
-                "has_pexels_key": bool(settings.pexels_api_key),
-                "has_pixabay_key": bool(settings.pixabay_api_key),
-                "asset_source_order": ["pexels_video", "pexels_image", "pixabay_image", "bing_image", "wikimedia_image"],
-            },
-        )
-        asset_check = run_stage(
-            errors,
-            "validate_assets",
-            lambda: validator.validate_assets(assets),
-            context={"assets": assets},
-        )
-        run_stage(
-            errors,
-            "validate_assets_result",
-            lambda: ensure_passed(asset_check.issues),
-            context={"issues": asset_check.issues},
-        )
-
-        print("[5/9] Generating audio...")
+        print("[4/10] Generating audio...")
         audio = run_stage(
             errors,
             "audio_agent",
             lambda: AudioAgent(run_dir).run(
                 script.narration,
                 script.word_count,
-                args.duration,
+                duration,
                 genre,
                 google_tts_credentials=settings.google_tts_credentials,
             ),
             context={
                 "word_count": script.word_count,
-                "duration": args.duration,
+                "duration": duration,
                 "has_google_tts_credentials": bool(settings.google_tts_credentials),
             },
         )
@@ -202,7 +175,7 @@ def main() -> int:
             context={"issues": audio_check.issues},
         )
 
-        print("[6/9] Building captions...")
+        print("[5/10] Building captions...")
         captions = run_stage(
             errors,
             "caption_agent",
@@ -229,7 +202,61 @@ def main() -> int:
             context={"issues": caption_check.issues},
         )
 
-        print("[7/9] Rendering video...")
+        print("[6/10] Building timed visual cues...")
+        timed_visual_cues = run_stage(
+            errors,
+            "timed_visual_agent",
+            lambda: TimedVisualAgent(run_dir).run(
+                script=script,
+                audio=audio,
+                genre=genre,
+                topic=script_topic,
+                provider=provider,
+            ),
+            context={
+                "word_count": len(audio.word_timestamps),
+                "duration_ms": audio.duration_ms,
+                "topic": topic,
+            },
+        )
+
+        print("[7/10] Fetching assets...")
+        assets = run_stage(
+            errors,
+            "asset_agent",
+            lambda: AssetAgent(run_dir).run(
+                script.image_cues,
+                script.sfx_cues,
+                genre,
+                pexels_key=settings.pexels_api_key,
+                pixabay_key=settings.pixabay_api_key,
+                unsplash_key=settings.unsplash_access_key,
+                provider=provider,
+                timed_visual_cues=timed_visual_cues,
+            ),
+            context={
+                "image_cues": script.image_cues,
+                "timed_visual_cue_count": len(timed_visual_cues),
+                "has_pexels_key": bool(settings.pexels_api_key),
+                "has_pixabay_key": bool(settings.pixabay_api_key),
+                "has_unsplash_key": bool(settings.unsplash_access_key),
+                "asset_source_order": ["duckduckgo_video", "duckduckgo_image", "pexels_video", "pexels_image", "pixabay_image", "unsplash_image", "wikimedia_image", "openverse_image"],
+            },
+        )
+        asset_check = run_stage(
+            errors,
+            "validate_assets",
+            lambda: validator.validate_assets(assets),
+            context={"assets": assets},
+        )
+        run_stage(
+            errors,
+            "validate_assets_result",
+            lambda: ensure_passed(asset_check.issues),
+            context={"issues": asset_check.issues},
+        )
+
+        print("[8/10] Rendering video...")
         render = run_stage(
             errors,
             "render_agent",
@@ -238,6 +265,7 @@ def main() -> int:
                 "image_count": len(assets.image_paths),
                 "video_count": len(assets.video_paths),
                 "media_count": len(assets.media_paths),
+                "media_durations_ms": assets.media_durations_ms,
                 "audio_path": audio.final_audio_path,
                 "caption_path": captions.ass_path,
             },
@@ -255,7 +283,7 @@ def main() -> int:
             context={"issues": render_check.issues},
         )
 
-        print("[8/9] Generating thumbnails...")
+        print("[9/10] Generating thumbnails...")
         thumbnails = run_stage(
             errors,
             "thumbnail_agent",
@@ -268,7 +296,7 @@ def main() -> int:
             },
         )
 
-        print("[9/9] Complete.")
+        print("[10/10] Complete.")
         print(f"Final video: {render.video_path}")
         print(f"Shorts cover: {thumbnails.shorts_cover_path}")
         print(f"YouTube thumbnail: {thumbnails.youtube_thumbnail_path}")
@@ -414,6 +442,75 @@ def _split_csv(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def duration_from_topic(text: str) -> int | None:
+    patterns = (
+        r"\bduration\s*(?:of|for|is|:|=|,|-)?\s*(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b",
+        r"\b(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, str(text or ""), flags=re.I)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def combine_topic_and_angle(topic: str, selected_topic: str) -> str:
+    topic = " ".join(str(topic or "").split())
+    selected_topic = " ".join(str(selected_topic or "").split())
+    if not selected_topic or selected_topic.lower() == topic.lower():
+        return topic
+    if not topic:
+        return selected_topic
+    if not _topics_overlap(topic, selected_topic):
+        return topic
+    if selected_topic.lower().startswith(f"{topic.lower()} -"):
+        return selected_topic
+    return f"{topic} - {selected_topic}"
+
+
+def strip_duration_instruction(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(r"\b(?:keep|set|use|with)?\s*(?:the\s+)?duration\s*(?:of|for|to|is|:|=|,|-)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:keep|set|use)\s+(?:it\s+)?(?:for|to)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use)\b\s*$", " ", cleaned, flags=re.I)
+    return " ".join(cleaned.split()).strip(" ,.;")
+
+
+def _topics_overlap(topic: str, selected_topic: str) -> bool:
+    topic_terms = set(_topic_terms_for_overlap(topic))
+    selected_terms = set(_topic_terms_for_overlap(selected_topic))
+    if not topic_terms or not selected_terms:
+        return False
+    return bool(topic_terms.intersection(selected_terms))
+
+
+def _topic_terms_for_overlap(text: str) -> list[str]:
+    stop = {
+        "about",
+        "duration",
+        "from",
+        "keep",
+        "make",
+        "secons",
+        "seconds",
+        "short",
+        "that",
+        "there",
+        "this",
+        "video",
+        "where",
+        "with",
+    }
+    terms = []
+    for raw in re.findall(r"[a-z0-9]{3,}", str(text).lower()):
+        term = "demons" if raw == "daemons" else raw
+        if term not in stop and term not in terms:
+            terms.append(term)
+    return terms
 
 
 def load_genre(genre_id: str) -> GenreConfig:

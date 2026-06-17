@@ -20,6 +20,9 @@ class RenderAgent(BaseAgent):
             "video_count": len(assets.video_paths),
             "media_count": len(assets.media_paths),
             "media_types": assets.media_types,
+            "media_start_ms": assets.media_start_ms,
+            "media_end_ms": assets.media_end_ms,
+            "media_durations_ms": assets.media_durations_ms,
             "audio_path": audio.final_audio_path,
             "music_path": assets.music_path,
             "ass_caption_path": captions.ass_path,
@@ -36,6 +39,7 @@ class RenderAgent(BaseAgent):
             music_path=assets.music_path,
             media_paths=assets.media_paths,
             media_types=assets.media_types,
+            media_durations_ms=assets.media_durations_ms,
         )
         result = RenderResult(
             video_path=meta["video_path"],

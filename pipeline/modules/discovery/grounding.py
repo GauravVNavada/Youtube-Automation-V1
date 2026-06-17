@@ -55,6 +55,7 @@ def _fallback_plan(topic: str, genre: GenreConfig) -> dict[str, Any]:
     clean = " ".join(topic.split())
     terms = _topic_terms(clean)
     genre_id = genre.genre_id.lower()
+    fictional_subject = _allows_fictional_sources(clean)
     if genre_id in {"scary_stories", "mystery_stories"}:
         queries = [
             f"{clean} real reported incident location",
@@ -62,8 +63,13 @@ def _fallback_plan(topic: str, genre: GenreConfig) -> dict[str, Any]:
             f"{clean} witness account local legend",
             f"{clean} historical place report",
         ]
-        excluded = ["movie", "anime", "tv series", "theme park", "game", "song", "massacre", "shooting"]
-        note = "Find a named place, case, urban legend, local report, or documented claim that matches the user topic."
+        if fictional_subject:
+            queries = [f"{clean} character scene context", f"{clean} movie character conflict", f"{clean} official character details"]
+            excluded = ["unrelated", "theme park"]
+            note = "Keep the requested fictional/movie subject as the anchor; do not replace it with a generic horror topic."
+        else:
+            excluded = ["movie", "anime", "tv series", "theme park", "game", "song", "massacre", "shooting"]
+            note = "Find a named place, case, urban legend, local report, or documented claim that matches the user topic."
     elif genre_id == "history_facts":
         queries = [f"{clean} history facts date place", f"{clean} historical record", f"{clean} artifact event"]
         excluded = ["movie", "game", "fiction", "fan wiki"]
@@ -80,8 +86,31 @@ def _fallback_plan(topic: str, genre: GenreConfig) -> dict[str, Any]:
 
 
 def _topic_terms(text: str) -> list[str]:
-    stop = {"stories", "story", "this", "for", "with", "haunted", "and", "that", "the", "from"}
+    stop = {
+        "stories",
+        "story",
+        "this",
+        "for",
+        "with",
+        "haunted",
+        "and",
+        "that",
+        "the",
+        "from",
+        "duration",
+        "seconds",
+        "secons",
+        "keep",
+        "make",
+        "short",
+        "video",
+    }
     return [word for word in re.findall(r"[a-z0-9]{3,}", text.lower()) if word not in stop][:12]
+
+
+def _allows_fictional_sources(text: str) -> bool:
+    lower = text.lower()
+    return any(term in lower for term in ("iron man", "avengers", "marvel", "batman", "naruto", "harry potter", "movie", "anime", "game"))
 
 
 def _clean_items(value: Any, fallback: list[str], max_items: int) -> list[str]:

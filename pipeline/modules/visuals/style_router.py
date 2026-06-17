@@ -52,7 +52,19 @@ def apply_visual_style_to_script(script, plan: VisualStylePlan):
 
 
 def apply_visual_style_to_cues(cues: list[ImageCue], plan: VisualStylePlan) -> list[ImageCue]:
-    return [ImageCue(stylized_asset_keyword(cue.keyword, plan), cue.timestamp_hint, cue.mood) for cue in cues]
+    return [
+        ImageCue(
+            stylized_asset_keyword(cue.keyword, plan),
+            cue.timestamp_hint,
+            cue.mood,
+            role=cue.role,
+            subject_lock=cue.subject_lock,
+            required_subjects=list(cue.required_subjects),
+            aliases=list(cue.aliases),
+            allowed_fallback_level=cue.allowed_fallback_level,
+        )
+        for cue in cues
+    ]
 
 
 def stylized_query_variants(keyword: str, plan: VisualStylePlan) -> list[str]:

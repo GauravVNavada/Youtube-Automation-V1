@@ -36,8 +36,10 @@ def _extract_json_object(text: str) -> str:
 def _repair_missing_commas(text: str) -> str:
     repaired = text
     for _ in range(3):
-        next_text = re.sub(r'(["}\]])\s*\n\s*("[-A-Za-z0-9_ ]+"\s*:)', r"\1,\n\2", repaired)
-        next_text = re.sub(r'(["}\]])\s+("[-A-Za-z0-9_ ]+"\s*:)', r"\1, \2", next_text)
+        next_text = re.sub(r'(["}\]0-9])\s*\n\s*("[-A-Za-z0-9_ ]+"\s*:)', r"\1,\n\2", repaired)
+        next_text = re.sub(r'(["}\]0-9])\s+("[-A-Za-z0-9_ ]+"\s*:)', r"\1, \2", next_text)
+        next_text = re.sub(r'\b(true|false|null)\s*\n\s*("[-A-Za-z0-9_ ]+"\s*:)', r"\1,\n\2", next_text)
+        next_text = re.sub(r'\b(true|false|null)\s+("[-A-Za-z0-9_ ]+"\s*:)', r"\1, \2", next_text)
         next_text = re.sub(r'(["}\]])\s*\n\s*([{\[])', r"\1,\n\2", next_text)
         next_text = re.sub(r"(\})\s*\n\s*(\{)", r"\1,\n\2", next_text)
         next_text = re.sub(r"(\])\s*\n\s*(\{)", r"\1,\n\2", next_text)

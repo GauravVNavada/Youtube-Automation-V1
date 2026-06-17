@@ -16,6 +16,10 @@ from modules.audio.timing import evenly_spaced_word_timestamps
 from modules.audio.tts import estimate_duration_ms
 
 
+INITIAL_AUDIO_SILENCE_MS = 220
+SENTENCE_AUDIO_GAP_MS = 180
+
+
 class AudioAgent(BaseAgent):
     name = "audio_agent"
 
@@ -79,6 +83,23 @@ class AudioAgent(BaseAgent):
         else:
             _convert_or_copy_audio(narration_path, final_path)
             actual_duration_ms = probe_audio_duration_ms(final_path) or raw_duration_ms
+        sentence_gap_path = audio_dir / "final_audio_sentence_gaps.wav"
+        inserted_ms, gap_timestamps = _insert_sentence_gaps(
+            final_path,
+            sentence_gap_path,
+            timestamps,
+            actual_duration_ms,
+            SENTENCE_AUDIO_GAP_MS,
+        )
+        if inserted_ms > 0:
+            final_path = sentence_gap_path
+            timestamps = gap_timestamps
+            actual_duration_ms = (probe_audio_duration_ms(final_path) or actual_duration_ms + inserted_ms)
+        padded_path = audio_dir / "final_audio_padded.wav"
+        if _prepend_silence(final_path, padded_path, INITIAL_AUDIO_SILENCE_MS):
+            final_path = padded_path
+            timestamps = _shift_word_timestamps(timestamps, INITIAL_AUDIO_SILENCE_MS)
+            actual_duration_ms = (probe_audio_duration_ms(final_path) or actual_duration_ms + INITIAL_AUDIO_SILENCE_MS)
         quality = analyze_audio_quality(final_path)
         bundle = AudioBundle(
             narration_path=str(narration_path),
@@ -169,6 +190,155 @@ def _convert_or_copy_audio(source_path: str | Path, target_path: Path) -> None:
     )
     if proc.returncode != 0:
         raise RuntimeError(f"Could not convert narration audio: {proc.stderr[-1000:]}")
+
+
+def _prepend_silence(source_path: Path, target_path: Path, silence_ms: int) -> bool:
+    if silence_ms <= 0:
+        return False
+    ffmpeg = shutil.which("ffmpeg")
+    source = Path(source_path)
+    if not ffmpeg or not source.exists():
+        return False
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    seconds = silence_ms / 1000.0
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-t",
+            f"{seconds:.3f}",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-i",
+            str(source),
+            "-filter_complex",
+            "[0:a][1:a]concat=n=2:v=0:a=1[a]",
+            "-map",
+            "[a]",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            str(target_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return proc.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0
+
+
+def _insert_sentence_gaps(
+    source_path: Path,
+    target_path: Path,
+    words: list[WordTimestamp],
+    duration_ms: int,
+    gap_ms: int,
+) -> tuple[int, list[WordTimestamp]]:
+    boundaries = _sentence_boundaries(words, duration_ms)
+    if not boundaries or gap_ms <= 0:
+        return 0, words
+    ffmpeg = shutil.which("ffmpeg")
+    source = Path(source_path)
+    if not ffmpeg or not source.exists():
+        return 0, words
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    filters: list[str] = []
+    concat_labels: list[str] = []
+    cursor = 0
+    segment_index = 0
+    silence_index = 0
+    for boundary in boundaries:
+        if boundary > cursor:
+            label = f"a{segment_index}"
+            filters.append(
+                f"[0:a]atrim=start={cursor / 1000.0:.3f}:end={boundary / 1000.0:.3f},"
+                f"asetpts=PTS-STARTPTS[{label}]"
+            )
+            concat_labels.append(f"[{label}]")
+            segment_index += 1
+        silence_label = f"s{silence_index}"
+        filters.append(
+            f"[1:a]atrim=duration={gap_ms / 1000.0:.3f},asetpts=PTS-STARTPTS[{silence_label}]"
+        )
+        concat_labels.append(f"[{silence_label}]")
+        silence_index += 1
+        cursor = boundary
+    if cursor < duration_ms:
+        label = f"a{segment_index}"
+        filters.append(
+            f"[0:a]atrim=start={cursor / 1000.0:.3f}:end={duration_ms / 1000.0:.3f},"
+            f"asetpts=PTS-STARTPTS[{label}]"
+        )
+        concat_labels.append(f"[{label}]")
+
+    filters.append("".join(concat_labels) + f"concat=n={len(concat_labels)}:v=0:a=1[aout]")
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(source),
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[aout]",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            str(target_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0 or not target_path.exists() or target_path.stat().st_size <= 0:
+        return 0, words
+    inserted_ms = len(boundaries) * gap_ms
+    return inserted_ms, _shift_after_boundaries(words, boundaries, gap_ms)
+
+
+def _sentence_boundaries(words: list[WordTimestamp], duration_ms: int) -> list[int]:
+    boundaries = []
+    for index, word in enumerate(words[:-1]):
+        if str(word.word or "").rstrip().endswith((".", "!", "?")):
+            boundary = max(0, min(duration_ms - 1, int(word.end_ms)))
+            if not boundaries or boundary - boundaries[-1] > 250:
+                boundaries.append(boundary)
+    return boundaries[:30]
+
+
+def _shift_after_boundaries(words: list[WordTimestamp], boundaries: list[int], gap_ms: int) -> list[WordTimestamp]:
+    shifted = []
+    for word in words:
+        offset = sum(gap_ms for boundary in boundaries if word.start_ms >= boundary)
+        shifted.append(
+            WordTimestamp(
+                word=word.word,
+                start_ms=word.start_ms + offset,
+                end_ms=word.end_ms + offset,
+            )
+        )
+    return shifted
+
+
+def _shift_word_timestamps(words: list[WordTimestamp], offset_ms: int) -> list[WordTimestamp]:
+    return [
+        WordTimestamp(
+            word=word.word,
+            start_ms=word.start_ms + offset_ms,
+            end_ms=word.end_ms + offset_ms,
+        )
+        for word in words
+    ]
 
 
 def _generate_tone_fallback(output_path: Path, duration_ms: int) -> None:

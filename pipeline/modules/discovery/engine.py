@@ -62,6 +62,8 @@ def _local_results(
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
     for ref in reference_scripts[:5]:
+        if not _reference_matches_topic(ref, topic):
+            continue
         title = str(ref.get("title") or genre.display_name)
         hook_type = str(ref.get("hook_type") or "reference hook")
         why = str(ref.get("why_it_worked") or "")
@@ -70,7 +72,7 @@ def _local_results(
         script = " ".join(str(ref.get("script") or "").split())[:260]
         results.append(
             SearchResult(
-                title=f"{topic}: {title}",
+                title=title,
                 url=str(ref.get("source_url") or ref.get("video_url") or ""),
                 snippet=f"{hook_type}. {why}. {fact_text}. {script}",
                 source=str(ref.get("source") or "local_reference"),
@@ -119,6 +121,8 @@ def _results_to_candidates(
 
 
 def _is_relevant_result(result: SearchResult, topic: str, grounding_plan: dict[str, Any]) -> bool:
+    if result.source == "local_profile":
+        return False
     haystack = f"{result.title} {result.snippet}".lower()
     excluded = [str(term).lower() for term in grounding_plan.get("excluded_terms", [])]
     if any(term and term in haystack for term in excluded):
@@ -135,6 +139,22 @@ def _plan_overlap_score(result: SearchResult, grounding_plan: dict[str, Any]) ->
 
 def _plan_terms(grounding_plan: dict[str, Any]) -> list[str]:
     return [str(term).lower() for term in grounding_plan.get("required_terms", []) if len(str(term)) >= 3]
+
+
+def _reference_matches_topic(ref: dict[str, Any], topic: str) -> bool:
+    topic_terms = set(keywords_from_text(topic, 10))
+    if not topic_terms:
+        return False
+    haystack = " ".join(
+        [
+            str(ref.get("title") or ""),
+            str(ref.get("real_world_anchor") or ""),
+            " ".join(str(fact) for fact in ref.get("facts", []) if isinstance(ref.get("facts"), list)),
+            str(ref.get("script") or ref.get("full_script") or ""),
+            " ".join(str(word) for word in ref.get("visual_keywords", []) if isinstance(ref.get("visual_keywords"), list)),
+        ]
+    )
+    return bool(topic_terms.intersection(keywords_from_text(haystack, 40)))
 
 
 def _angle_from_keywords(keywords: list[str]) -> str:
