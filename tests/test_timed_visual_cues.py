@@ -20,6 +20,8 @@ from modules.assets.candidates import AssetCandidate
 from modules.assets.image_scoring import ImageResult
 from modules.assets.video_services import VideoResult
 from modules.captions.ass_builder import build_ass
+from modules.audio.alignment import _map_whisper_timestamps_to_script
+from modules.audio.humanizer import _build_excess_pause_cuts
 from modules.render.ffmpeg_builder import build_media_timeline_command
 from modules.visuals.timed_cues import generate_timed_visual_cues, merge_caption_phrases_for_visuals
 
@@ -98,6 +100,62 @@ def _script_payload(title: str, narration: str, image_base: str) -> dict:
 
 
 class TimedVisualCueTests(unittest.TestCase):
+    def test_whisper_alignment_restores_script_words_with_exact_match(self) -> None:
+        mapped = _map_whisper_timestamps_to_script(
+            [
+                WordTimestamp("Iron", 100, 250),
+                WordTimestamp("Man", 260, 420),
+                WordTimestamp("waited", 430, 700),
+            ],
+            "Iron Man waited.",
+            1000,
+        )
+
+        self.assertEqual([word.word for word in mapped], ["Iron", "Man", "waited."])
+        self.assertEqual([(word.start_ms, word.end_ms) for word in mapped], [(100, 250), (260, 420), (430, 700)])
+
+    def test_whisper_alignment_distributes_merged_words_over_script_words(self) -> None:
+        mapped = _map_whisper_timestamps_to_script(
+            [
+                WordTimestamp("I", 0, 120),
+                WordTimestamp("don't", 130, 430),
+                WordTimestamp("know", 440, 700),
+            ],
+            "I do not know.",
+            900,
+        )
+
+        self.assertEqual([word.word for word in mapped], ["I", "do", "not", "know."])
+        self.assertEqual((mapped[1].start_ms, mapped[2].end_ms), (130, 430))
+        self.assertLess(mapped[1].end_ms, mapped[2].end_ms)
+
+    def test_whisper_alignment_interpolates_skipped_script_words(self) -> None:
+        mapped = _map_whisper_timestamps_to_script(
+            [
+                WordTimestamp("The", 0, 120),
+                WordTimestamp("door", 300, 520),
+            ],
+            "The red door.",
+            700,
+        )
+
+        self.assertEqual([word.word for word in mapped], ["The", "red", "door."])
+        self.assertGreaterEqual(mapped[1].start_ms, mapped[0].end_ms)
+        self.assertLessEqual(mapped[1].end_ms, mapped[2].start_ms)
+
+    def test_audio_humanizer_does_not_trim_inside_unpunctuated_speech(self) -> None:
+        cuts = _build_excess_pause_cuts(
+            [
+                WordTimestamp("This", 0, 120),
+                WordTimestamp("gap", 700, 900),
+                WordTimestamp("stays.", 1600, 1900),
+                WordTimestamp("But", 3000, 3200),
+            ],
+            source_duration_ms=3600,
+        )
+
+        self.assertEqual(cuts, [(2550, 3000)])
+
     def test_caption_chunks_merge_into_non_overlapping_visual_windows(self) -> None:
         words = [
             WordTimestamp("First", 0, 300),
@@ -457,8 +515,7 @@ class TimedVisualCueTests(unittest.TestCase):
         self.assertIn(",60,60,250,1", content)
         self.assertEqual(content.count("Dialogue:"), 4)
         self.assertIn(r"\pos(540,1450)", content)
-        self.assertIn(r"\fad(60,90)", content)
-        self.assertIn(r"\fscx120\fscy120", content)
+        self.assertNotIn(r"\fad(", content)
         self.assertIn("THOR RAISES THE", content)
 
     def test_ass_captions_wrap_to_two_lines_and_cap_screen_words(self) -> None:

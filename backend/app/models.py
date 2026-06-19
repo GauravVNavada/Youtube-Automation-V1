@@ -390,3 +390,20 @@ class KnowledgeImportBatch(Base):
     row_counts: Mapped[dict] = mapped_column(JSON, default=dict)
     errors: Mapped[list] = mapped_column(JSON, default=list)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AgentRunSnapshot(Base):
+    __tablename__ = "agent_run_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    surface: Mapped[str] = mapped_column(String(40), default="playground", index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    chat_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    job_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    user_message: Mapped[str] = mapped_column(Text, default="")
+    genre_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    pipeline_run_dir: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

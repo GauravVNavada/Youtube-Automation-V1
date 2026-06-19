@@ -23,7 +23,7 @@ from app.core.config import get_settings
 
 router = APIRouter(prefix="/playground", tags=["playground"])
 
-RUN_SCHEMA_VERSION = 3
+RUN_SCHEMA_VERSION = 4
 TERMINAL_STATUSES = {"succeeded", "failed", "skipped"}
 VALID_STAGE_STATUSES = {"queued", "running", "succeeded", "failed", "skipped"}
 _RUN_LOCK = threading.RLock()
@@ -42,10 +42,28 @@ class PlaygroundRunCreate(BaseModel):
 
 VISIBLE_STAGES: list[dict[str, str]] = [
     {
+        "id": "desktop_master_agent",
+        "agent_name": "desktop_master_agent",
+        "execution_mode": "ai",
+        "prompt_text": "Read the chat context and decide whether this is new generation, calibration, or an edit/remake request.",
+    },
+    {
+        "id": "style_sampler_agent",
+        "agent_name": "style_sampler_agent",
+        "execution_mode": "ai",
+        "prompt_text": "Create three calibration style profiles when the desktop onboarding flow asks for samples.",
+    },
+    {
+        "id": "parameter_agent",
+        "agent_name": "parameter_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Map follow-up feedback into settings patches and target pipeline-agent repair notes.",
+    },
+    {
         "id": "master_agent",
         "agent_name": "master_agent",
         "execution_mode": "deterministic",
-        "prompt_text": "Prepare the playground run, validate inputs, and start the shared pipeline.",
+        "prompt_text": "Prepare the playground run, validate inputs, and start the shared final pipeline.",
     },
     {
         "id": "topic_discovery_agent",
@@ -176,11 +194,28 @@ def _runs_dir() -> Path:
     return _project_root() / "playground" / "data" / "runs"
 
 
+def _legacy_runs_dir() -> Path:
+    return _project_root() / "playground" / "data" / "runs"
+
+
+def _all_runs_dirs() -> list[Path]:
+    roots: list[Path] = []
+    for path in (_runs_dir(), _legacy_runs_dir()):
+        resolved = path.expanduser().resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
 def _pipeline_output_runs_dir() -> Path:
     configured = os.getenv("PLAYGROUND_PIPELINE_RUNS_DIR", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     return _runs_dir() / "_pipeline_outputs"
+
+
+def _legacy_pipeline_output_runs_dir() -> Path:
+    return _legacy_runs_dir() / "_pipeline_outputs"
 
 
 def _ensure_pipeline_import_path() -> None:
@@ -204,6 +239,12 @@ def _render_prompt_module(module_name: str, fallback: str) -> str:
 
 
 def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
+    if stage_id == "desktop_master_agent":
+        return _desktop_agent_prompt_text("master_agent", "Desktop Master Agent") or fallback
+    if stage_id == "style_sampler_agent":
+        return _desktop_agent_prompt_text("style_sampler_agent", "Desktop Style Sampler Agent") or fallback
+    if stage_id == "parameter_agent":
+        return _desktop_agent_prompt_text("parameter_agent", "Desktop Parameter Agent") or fallback
     if stage_id == "script_agent":
         return _render_prompt_module("agents.prompts.script_prompts", fallback)
     if stage_id == "asset_agent":
@@ -229,19 +270,23 @@ def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
     return fallback
 
 
-def _desktop_agent_prompt_text() -> str:
+def _desktop_agent_prompt_text(only_module: str = "", only_title: str = "") -> str:
     sections = []
     try:
         from desktop_pipeline.message_base import render_messages_for_single_prompt
         from desktop_pipeline import master_agent, parameter_agent, style_sampler_agent
 
-        for title, module in (
+        modules = (
             ("Desktop Master Agent", master_agent),
             ("Desktop Style Sampler Agent", style_sampler_agent),
             ("Desktop Parameter Agent", parameter_agent),
-        ):
+        )
+        if only_module:
+            modules = tuple((title, module) for title, module in modules if module.__name__.rsplit(".", 1)[-1] == only_module)
+        for title, module in modules:
+            display_title = only_title or title
             if hasattr(module, "messages_base"):
-                sections.append(f"\n\n--- {title} Examples ---\n\n{render_messages_for_single_prompt(module.messages_base())}")
+                sections.append(f"\n\n--- {display_title} Examples ---\n\n{render_messages_for_single_prompt(module.messages_base())}")
     except Exception as exc:
         sections.append(f"\n\nDesktop agent examples could not be loaded: {type(exc).__name__}: {exc}")
     return "".join(sections)
@@ -249,6 +294,14 @@ def _desktop_agent_prompt_text() -> str:
 
 def _run_path(run_id: str) -> Path:
     return _runs_dir() / f"{run_id}.json"
+
+
+def _existing_run_path(run_id: str) -> Path:
+    for root in _all_runs_dirs():
+        path = root / f"{run_id}.json"
+        if path.exists():
+            return path
+    return _run_path(run_id)
 
 
 def _run_workspace(run_id: str) -> Path:
@@ -284,23 +337,29 @@ def list_llm_options() -> list[dict[str, Any]]:
 @router.get("/runs")
 def list_runs() -> list[dict[str, Any]]:
     _runs_dir().mkdir(parents=True, exist_ok=True)
-    runs: list[dict[str, Any]] = []
-    paths = sorted(_runs_dir().glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    runs_by_id: dict[str, dict[str, Any]] = {}
+    for run in _list_runs_from_db():
+        runs_by_id[str(run.get("id") or "")] = run
+    paths = sorted(
+        (path for root in _all_runs_dirs() for path in root.glob("*.json")),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
     for path in paths:
         try:
-            runs.append(_read_run(path))
+            run = _read_run(path)
+            runs_by_id[str(run["id"])] = {
+                "id": run["id"],
+                "user_message": run.get("user_message", ""),
+                "status": run.get("status", "failed"),
+                "created_at": run.get("created_at", ""),
+                "updated_at": run.get("updated_at", ""),
+            }
         except Exception as exc:
-            runs.append(_broken_run_summary(path, exc))
-    return [
-        {
-            "id": run["id"],
-            "user_message": run.get("user_message", ""),
-            "status": run.get("status", "failed"),
-            "created_at": run.get("created_at", ""),
-            "updated_at": run.get("updated_at", ""),
-        }
-        for run in runs[:50]
-    ]
+            broken = _broken_run_summary(path, exc)
+            runs_by_id[str(broken["id"])] = broken
+    runs = sorted(runs_by_id.values(), key=lambda run: str(run.get("updated_at") or run.get("created_at") or ""), reverse=True)
+    return runs[:50]
 
 
 @router.post("/runs")
@@ -320,7 +379,18 @@ def create_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
-    path = _run_path(run_id)
+    db_run = _read_run_from_db(run_id)
+    if db_run is not None:
+        path = _existing_run_path(run_id)
+        if path.exists():
+            return _read_run(path)
+        _refresh_run_from_pipeline_files(db_run)
+        if db_run.get("status") in TERMINAL_STATUSES:
+            final = _stage_by_id(db_run, "final_output")
+            final["output_json"].update(_final_output_json(db_run))
+            final["artifacts"] = _collect_final_artifacts(db_run)
+        return db_run
+    path = _existing_run_path(run_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Playground run not found")
     return _read_run(path)
@@ -355,6 +425,36 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     stages = [_initial_stage(stage, now) for stage in VISIBLE_STAGES]
     stages[0] = _mark_stage_dict(
         stages[0],
+        "succeeded",
+        now,
+        input_json={
+            "chat_message": payload.message,
+            "genre_id": genre["genre_id"],
+            "notes": payload.notes,
+        },
+        output_json={
+            "intent": "new_video",
+            "target_agent": "final_pipeline",
+            "planned_agents": [stage["id"] for stage in VISIBLE_STAGES[3:]],
+        },
+        message="Playground routed this as a new final-pipeline video run",
+    )
+    stages[1] = _mark_stage_dict(
+        stages[1],
+        "skipped",
+        now,
+        output_json={"reason": "Style sampling only runs during desktop calibration."},
+        message="Skipped for direct playground generation",
+    )
+    stages[2] = _mark_stage_dict(
+        stages[2],
+        "skipped",
+        now,
+        output_json={"reason": "Parameter mapping only runs for follow-up edit/remake prompts."},
+        message="Skipped because this is a new generation request",
+    )
+    stages[3] = _mark_stage_dict(
+        stages[3],
         "running",
         now,
         input_json=_safe_payload(payload),
@@ -419,7 +519,7 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
     transcript = _run_workspace(run_id) / "stdout.log"
     try:
         transcript.parent.mkdir(parents=True, exist_ok=True)
-        _update_run(run_id, lambda run: _mark_stage(run, "master_agent", "succeeded", "Shared pipeline process is starting"))
+        _update_run(run_id, lambda run: _mark_stage(run, "master_agent", "succeeded", "Shared final pipeline process is starting"))
         env = _pipeline_env(payload)
         cmd = [
             sys.executable,
@@ -622,7 +722,7 @@ def _refresh_run_from_pipeline_files(run: dict[str, Any]) -> None:
     run_dir_text = str(run.get("pipeline_run_dir") or "")
     if not run_dir_text:
         return
-    run_dir = Path(run_dir_text)
+    run_dir = _resolve_existing_path(Path(run_dir_text))
     if not run_dir.exists():
         return
     for stage in run.get("stages", []):
@@ -742,7 +842,7 @@ def _artifact_list(paths: list[Path]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for path in paths:
         try:
-            resolved = path.expanduser().resolve()
+            resolved = _resolve_existing_path(path)
         except OSError:
             continue
         if str(resolved) in seen or not resolved.exists() or not resolved.is_file():
@@ -805,7 +905,9 @@ def _read_run_raw(path: Path) -> dict[str, Any]:
 
 
 def _save_run(run: dict[str, Any]) -> None:
-    path = _run_path(str(run["id"]))
+    path = _existing_run_path(str(run["id"]))
+    if not path.exists():
+        path = _run_path(str(run["id"]))
     path.parent.mkdir(parents=True, exist_ok=True)
     _sanitize_run(run)
     tmp = path.with_suffix(".json.tmp")
@@ -817,11 +919,83 @@ def _save_run(run: dict[str, Any]) -> None:
             path.write_text(json.dumps(run, indent=2, ensure_ascii=True), encoding="utf-8")
         except OSError:
             pass
+    _save_run_to_db(run)
+
+
+def _list_runs_from_db() -> list[dict[str, Any]]:
+    try:
+        from sqlalchemy import select
+
+        from app.core.database import SessionLocal
+        from app.models import AgentRunSnapshot
+
+        with SessionLocal() as db:
+            rows = db.scalars(
+                select(AgentRunSnapshot)
+                .where(AgentRunSnapshot.surface == "playground")
+                .order_by(AgentRunSnapshot.updated_at.desc())
+                .limit(50)
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "user_message": row.user_message,
+                    "status": row.status,
+                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+                }
+                for row in rows
+            ]
+    except Exception:
+        return []
+
+
+def _read_run_from_db(run_id: str) -> dict[str, Any] | None:
+    try:
+        from app.core.database import SessionLocal
+        from app.models import AgentRunSnapshot
+
+        with SessionLocal() as db:
+            row = db.get(AgentRunSnapshot, run_id)
+            if row is None or row.surface != "playground":
+                return None
+            payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+            if not payload:
+                return None
+            payload = dict(payload)
+            payload.setdefault("id", row.id)
+            payload.setdefault("status", row.status)
+            payload.setdefault("user_message", row.user_message)
+            payload.setdefault("genre_id", row.genre_id)
+            payload.setdefault("pipeline_run_dir", row.pipeline_run_dir)
+            return payload
+    except Exception:
+        return None
+
+
+def _save_run_to_db(run: dict[str, Any]) -> None:
+    try:
+        from app.core.database import SessionLocal
+        from app.models import AgentRunSnapshot
+
+        with SessionLocal() as db:
+            row = db.get(AgentRunSnapshot, str(run["id"]))
+            if row is None:
+                row = AgentRunSnapshot(id=str(run["id"]), surface="playground")
+                db.add(row)
+            row.user_message = str(run.get("user_message") or run.get("raw_user_message") or "")
+            row.genre_id = str(run.get("genre_id") or "")
+            row.status = str(run.get("status") or "running")
+            row.pipeline_run_dir = str(run.get("pipeline_run_dir") or "")
+            row.payload_json = run
+            db.commit()
+    except Exception:
+        pass
 
 
 def _update_run(run_id: str, updater) -> None:
     with _RUN_LOCK:
-        path = _run_path(run_id)
+        path = _existing_run_path(run_id)
         run = _read_run_raw(path)
         _sanitize_run(run)
         updater(run)
@@ -892,7 +1066,7 @@ def _normalize_legacy_run(run: dict[str, Any], path: Path) -> dict[str, Any]:
     else:
         _fail_run(
             normalized,
-            "master_agent",
+            "desktop_master_agent",
             "This was an old mock playground run. Start a new run to execute the real shared pipeline.",
         )
     return normalized
@@ -1130,11 +1304,35 @@ def _decode_artifact_id(artifact_id: str) -> Path | None:
         raw = base64.urlsafe_b64decode(artifact_id.encode("ascii")).decode("utf-8")
     except Exception:
         return None
-    path = Path(raw).expanduser().resolve()
-    allowed = [_runs_dir(), _pipeline_data_dir(), _pipeline_output_runs_dir()]
+    path = _resolve_existing_path(Path(raw))
+    allowed = [
+        *_all_runs_dirs(),
+        _pipeline_data_dir(),
+        _pipeline_output_runs_dir(),
+        _legacy_pipeline_output_runs_dir(),
+    ]
     if any(_is_relative_to(path, root.resolve()) for root in allowed):
         return path
     return None
+
+
+def _resolve_existing_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved.exists():
+        return resolved
+    raw = str(path)
+    remaps = (
+        ("/app/playground/data/runs", _legacy_runs_dir()),
+        ("/app/data/playground/runs", _runs_dir()),
+        ("/app/playground/data/pipeline", _pipeline_data_dir()),
+    )
+    for prefix, root in remaps:
+        if raw == prefix or raw.startswith(prefix + "/"):
+            suffix = raw[len(prefix) :].lstrip("/")
+            candidate = (root / suffix).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+    return resolved
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

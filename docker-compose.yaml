@@ -1,5 +1,5 @@
 services:
-  db_app:
+  db_common:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${APP_DB_USER:-pradeep}
@@ -11,22 +11,6 @@ services:
       - app_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-pradeep} -d ${APP_DB_NAME:-automation}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  db_playground:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${PLAYGROUND_DB_USER:-playground}
-      POSTGRES_PASSWORD: ${PLAYGROUND_DB_PASSWORD:-playground}
-      POSTGRES_DB: ${PLAYGROUND_DB_NAME:-playground}
-    ports:
-      - "${PLAYGROUND_DB_PORT:-5433}:5432"
-    volumes:
-      - playground_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PLAYGROUND_DB_USER:-playground} -d ${PLAYGROUND_DB_NAME:-playground}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -48,12 +32,12 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_app:5432/${APP_DB_NAME:-automation}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_common:5432/${APP_DB_NAME:-automation}
       REDIS_URL: redis://redis:6379/0
       MODULARSHORTS_DATA_DIR: /app/data/pipeline
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
       PLAYGROUND_PIPELINE_DATA_DIR: /app/playground/data/pipeline
-      PLAYGROUND_RUNS_DIR: /app/playground/data/runs
+      PLAYGROUND_RUNS_DIR: /app/data/playground/runs
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8084}
       GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
     ports:
@@ -63,7 +47,7 @@ services:
       - ./playground/data:/app/playground/data
       - ./secrets:/app/secrets:ro
     depends_on:
-      db_app:
+      db_common:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -76,7 +60,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_app:5432/${APP_DB_NAME:-automation}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_common:5432/${APP_DB_NAME:-automation}
       REDIS_URL: redis://redis:6379/0
       MODULARSHORTS_DATA_DIR: /app/data/pipeline
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
@@ -104,11 +88,8 @@ services:
     ports:
       - "${ADMINER_PORT:-8082}:8080"
     depends_on:
-      db_app:
-        condition: service_healthy
-      db_playground:
+      db_common:
         condition: service_healthy
 
 volumes:
   app_postgres_data:
-  playground_postgres_data:

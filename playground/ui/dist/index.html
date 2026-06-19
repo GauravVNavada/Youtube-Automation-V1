@@ -1,0 +1,1295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Playground</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: hsl(222.2 84% 4.9%);
+        --foreground: hsl(210 40% 98%);
+        --card: hsl(222.2 47.4% 7.5%);
+        --card-foreground: hsl(210 40% 98%);
+        --popover: hsl(222.2 47.4% 7.5%);
+        --popover-foreground: hsl(210 40% 98%);
+        --primary: hsl(164 72% 56%);
+        --primary-foreground: hsl(222.2 84% 4.9%);
+        --secondary: hsl(217.2 32.6% 17.5%);
+        --secondary-foreground: hsl(210 40% 98%);
+        --muted-bg: hsl(217.2 32.6% 13.5%);
+        --muted: hsl(215 20.2% 65.1%);
+        --accent-bg: hsl(217.2 32.6% 17.5%);
+        --accent: hsl(164 72% 56%);
+        --destructive: hsl(346.8 77.2% 59.8%);
+        --destructive-foreground: hsl(210 40% 98%);
+        --border: hsl(217.2 32.6% 20.5%);
+        --input: hsl(217.2 32.6% 20.5%);
+        --ring: hsl(164 72% 56%);
+        --warning: hsl(38 92% 58%);
+        --blue: hsl(221 83% 68%);
+        --radius: 8px;
+        --bg: var(--background);
+        --panel: var(--card);
+        --panel-2: var(--secondary);
+        --line: var(--border);
+        --text: var(--foreground);
+        --amber: var(--warning);
+        --rose: var(--destructive);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at 40% 0%, hsl(222.2 47.4% 10.5%) 0, var(--background) 42%);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: var(--secondary);
+        color: var(--text);
+        border-radius: var(--radius);
+        cursor: pointer;
+        transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        background: hsl(217.2 32.6% 21%);
+        border-color: hsl(215 20.2% 36%);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+
+      .ghost {
+        background: transparent;
+        border-color: var(--line);
+        color: var(--text);
+        min-height: 34px;
+        padding: 6px 10px;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: minmax(280px, 320px) minmax(420px, 1fr) minmax(420px, 520px);
+        height: 100vh;
+        overflow: hidden;
+        gap: 1px;
+        background: var(--border);
+      }
+
+      .sidebar,
+      .chat,
+      .details {
+        min-width: 0;
+        min-height: 0;
+        border-right: 0;
+      }
+
+      .sidebar {
+        background: color-mix(in srgb, var(--card) 94%, black);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow: hidden;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 12px;
+        background: var(--muted-bg);
+      }
+
+      .settings {
+        display: grid;
+        gap: 10px;
+        flex: 0 0 auto;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: hsl(222.2 47.4% 6.2%);
+        color: var(--text);
+        padding: 10px;
+        outline: none;
+      }
+
+      textarea {
+        resize: vertical;
+      }
+
+      .runs {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        overflow: auto;
+        padding-right: 2px;
+        min-height: 0;
+        flex: 1 1 auto;
+      }
+
+      .run-item {
+        text-align: left;
+        padding: 11px 12px;
+        display: grid;
+        gap: 5px;
+        background: transparent;
+        border-color: transparent;
+        border-radius: var(--radius);
+      }
+
+      .run-item:hover {
+        background: var(--accent-bg);
+        border-color: var(--border);
+      }
+
+      .run-item strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .run-item small {
+        color: var(--muted);
+      }
+
+      .chat {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        background: var(--background);
+        overflow: hidden;
+      }
+
+      .topbar {
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        background: color-mix(in srgb, var(--card) 78%, transparent);
+        backdrop-filter: blur(10px);
+      }
+
+      .topbar h2 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 650;
+      }
+
+      .status {
+        text-transform: capitalize;
+      }
+
+      .status.running,
+      .stage.running {
+        color: var(--amber);
+      }
+
+      .status.succeeded,
+      .stage.succeeded {
+        color: var(--accent);
+      }
+
+      .status.failed,
+      .stage.failed {
+        color: var(--rose);
+      }
+
+      .thread {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        overflow: auto;
+        padding: 18px;
+      }
+
+      .bubble {
+        max-width: min(760px, 92%);
+        padding: 12px 14px;
+        border-radius: var(--radius);
+        border: 1px solid var(--line);
+        background: var(--card);
+        line-height: 1.45;
+        white-space: pre-wrap;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .bubble.user {
+        justify-self: start;
+        background: var(--card);
+        border-color: var(--border);
+      }
+
+      .bubble.assistant {
+        justify-self: end;
+        background: color-mix(in srgb, var(--primary) 15%, var(--card));
+        border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+      }
+
+      .bubble small {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+      }
+
+      .bubble-meta {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .thinking {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 10px;
+      }
+
+      .thinking span {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--primary);
+        opacity: 0.45;
+        animation: thinking 1.2s infinite ease-in-out;
+      }
+
+      .thinking span:nth-child(2) {
+        animation-delay: 0.16s;
+      }
+
+      .thinking span:nth-child(3) {
+        animation-delay: 0.32s;
+      }
+
+      @keyframes thinking {
+        0%, 80%, 100% {
+          transform: translateY(0);
+          opacity: 0.35;
+        }
+        40% {
+          transform: translateY(-4px);
+          opacity: 1;
+        }
+      }
+
+      .composer {
+        border-top: 1px solid var(--line);
+        padding: 14px;
+        display: grid;
+        grid-template-columns: 1fr 96px;
+        gap: 10px;
+      }
+
+      .composer textarea {
+        min-height: 54px;
+        max-height: 140px;
+      }
+
+      .send {
+        background: var(--primary);
+        color: var(--primary-foreground);
+        border-color: transparent;
+        font-weight: 700;
+      }
+
+      .details {
+        background: color-mix(in srgb, var(--card) 94%, black);
+        display: grid;
+        grid-template-rows: auto minmax(260px, 46vh) 1fr;
+        overflow: hidden;
+      }
+
+      .details-head {
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .details-head h2 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        font-weight: 650;
+      }
+
+      .graph-wrap {
+        padding: 16px;
+        overflow: auto;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .graph {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        position: relative;
+      }
+
+      .stage {
+        min-height: 82px;
+        text-align: left;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 10px;
+        align-items: center;
+        border-radius: var(--radius);
+        border: 1px solid var(--line);
+        background: var(--panel);
+        position: relative;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .stage.selected {
+        border-color: var(--blue);
+        background: color-mix(in srgb, var(--blue) 10%, var(--panel));
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--blue) 48%, transparent);
+      }
+
+      .stage.running {
+        border-color: var(--warning);
+        background: color-mix(in srgb, var(--warning) 10%, var(--panel));
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 34%, transparent);
+      }
+
+      .stage.running::before {
+        content: "";
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--warning);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 40%, transparent);
+        animation: pulse 1.5s ease-out infinite;
+      }
+
+      .stage.selected.running {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+        box-shadow:
+          0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+          inset 3px 0 0 var(--warning);
+      }
+
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 42%, transparent);
+        }
+        70% {
+          box-shadow: 0 0 0 8px transparent;
+        }
+        100% {
+          box-shadow: 0 0 0 0 transparent;
+        }
+      }
+
+      .stage strong {
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .stage small {
+        color: var(--muted);
+      }
+
+      .stage::after {
+        content: "";
+        position: absolute;
+        left: 29px;
+        top: calc(100% + 1px);
+        height: 12px;
+        border-left: 1px solid var(--line);
+      }
+
+      .stage:last-child::after {
+        display: none;
+      }
+
+      .node-index {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #101318;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .stage.running .node-index {
+        color: #1d1405;
+        background: var(--amber);
+        border-color: transparent;
+      }
+
+      .stage.selected .node-index {
+        color: hsl(222.2 84% 4.9%);
+        background: var(--blue);
+        border-color: transparent;
+      }
+
+      .stage.selected.running .node-index {
+        color: var(--primary-foreground);
+        background: var(--accent);
+      }
+
+      .stage.succeeded .node-index {
+        color: #06110e;
+        background: var(--accent);
+        border-color: transparent;
+      }
+
+      .stage.failed .node-index {
+        color: #19050a;
+        background: var(--rose);
+        border-color: transparent;
+      }
+
+      .stage.skipped {
+        opacity: 0.72;
+      }
+
+      .stage.skipped .node-index {
+        background: #242832;
+        color: var(--muted);
+      }
+
+      .node-body {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .node-body span {
+        color: var(--muted);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .node-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .node-badges em {
+        font-style: normal;
+        font-size: 11px;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 7px;
+        background: var(--muted-bg);
+      }
+
+      .inspector {
+        overflow: auto;
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+
+      .section {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+
+      .section summary {
+        cursor: pointer;
+        padding: 10px 12px;
+        color: var(--text);
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        overflow: auto;
+        max-height: 280px;
+        color: hsl(210 40% 94%);
+        background: hsl(222.2 47.4% 5.2%);
+        border-top: 1px solid var(--line);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.45;
+        font-size: 12px;
+      }
+
+      .event-list {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid var(--line);
+      }
+
+      .event {
+        display: grid;
+        gap: 4px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: hsl(222.2 47.4% 6.2%);
+      }
+
+      .artifact-grid {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border-top: 1px solid var(--line);
+      }
+
+      .artifact {
+        display: grid;
+        gap: 8px;
+      }
+
+      .artifact img,
+      .artifact video {
+        width: 100%;
+        max-height: 220px;
+        object-fit: contain;
+        border-radius: var(--radius);
+        background: hsl(222.2 47.4% 4.5%);
+      }
+
+      .artifact a {
+        color: var(--accent);
+        overflow-wrap: anywhere;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        background: rgba(5, 7, 10, 0.78);
+        padding: 24px;
+      }
+
+      .modal.open {
+        display: grid;
+        place-items: center;
+      }
+
+      .modal-panel {
+        width: min(1280px, 96vw);
+        height: min(880px, 92vh);
+        border: 1px solid var(--line);
+        border-radius: calc(var(--radius) + 2px);
+        background: var(--popover);
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        overflow: hidden;
+        box-shadow: 0 20px 80px rgba(0, 0, 0, 0.42);
+      }
+
+      .modal-head {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .modal-head h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .modal-tabs {
+        display: flex;
+        gap: 8px;
+        overflow: auto;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .modal-tab {
+        white-space: nowrap;
+        min-height: 34px;
+        padding: 6px 10px;
+      }
+
+      .modal-tab.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+      }
+
+      .modal-body {
+        overflow: auto;
+        padding: 16px;
+      }
+
+      .modal-body pre {
+        max-height: none;
+        min-height: 100%;
+      }
+
+      .modal-body .artifact-grid {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
+      .modal-body .artifact img,
+      .modal-body .artifact video {
+        max-height: 420px;
+      }
+
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: hsl(215 20.2% 32%) transparent;
+      }
+
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: hsl(215 20.2% 32%);
+        border: 3px solid transparent;
+        border-radius: 999px;
+        background-clip: padding-box;
+      }
+
+      @media (max-width: 1120px) {
+        .app {
+          grid-template-columns: minmax(240px, 280px) 1fr;
+          grid-template-rows: minmax(520px, 1fr) minmax(520px, 70vh);
+          overflow: auto;
+        }
+
+        .details {
+          grid-column: 1 / -1;
+          min-height: 520px;
+          border-top: 1px solid var(--line);
+          grid-template-rows: auto minmax(220px, 42vh) 1fr;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .app {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(520px, 72vh) minmax(560px, 78vh);
+          height: auto;
+          min-height: 100vh;
+          overflow: auto;
+        }
+
+        .sidebar,
+        .chat,
+        .details {
+          border-right: 0;
+        }
+
+        .sidebar {
+          max-height: 520px;
+        }
+
+        .composer {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar,
+        .modal-head {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .modal {
+          padding: 10px;
+        }
+
+        .modal-panel {
+          width: 100%;
+          height: 96vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Agent Playground</h1>
+          <span class="pill" id="runCount">0 runs</span>
+        </div>
+        <button id="newChat" type="button">New Chat</button>
+        <div class="settings">
+          <label>
+            Genre
+            <select id="genre"></select>
+          </label>
+          <label>
+            Provider
+            <select id="provider"></select>
+          </label>
+          <label>
+            Gemini key
+            <input id="apiKey" type="password" autocomplete="off" placeholder="Optional for playground" />
+          </label>
+          <label>
+            Notes
+            <textarea id="notes" rows="3"></textarea>
+          </label>
+        </div>
+        <div class="runs" id="runs"></div>
+      </aside>
+
+      <section class="chat">
+        <header class="topbar">
+          <div>
+            <h2>Chat Run</h2>
+            <span class="pill" id="activeMeta">No run selected</span>
+          </div>
+          <span class="pill status" id="activeStatus">idle</span>
+        </header>
+        <div class="thread" id="thread"></div>
+        <form class="composer" id="composer">
+          <textarea id="message" rows="2" placeholder="Type a video request or change..."></textarea>
+          <button class="send" id="send" type="submit">Send</button>
+        </form>
+      </section>
+
+      <aside class="details">
+        <div class="details-head">
+          <h2 id="stageTitle">Agent Graph</h2>
+          <span class="pill" id="stageMeta">Click an agent</span>
+        </div>
+        <div class="graph-wrap">
+          <div class="graph" id="graph"></div>
+        </div>
+        <div class="inspector" id="inspector"></div>
+      </aside>
+    </main>
+    <div class="modal" id="stageModal" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="modalTitle">Agent Details</h2>
+            <span class="pill" id="modalMeta">No stage selected</span>
+          </div>
+          <button class="ghost" id="modalClose" type="button">Close</button>
+        </div>
+        <div class="modal-tabs" id="modalTabs"></div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <script>
+      const API = "/api/playground";
+      const terminal = new Set(["succeeded", "failed", "skipped"]);
+      const state = {
+        runs: [],
+        currentRun: null,
+        selectedStageId: "",
+        selectedStage: null,
+        modalTab: "artifacts",
+        messages: [],
+        poll: null,
+      };
+
+      const els = {
+        genre: document.getElementById("genre"),
+        provider: document.getElementById("provider"),
+        apiKey: document.getElementById("apiKey"),
+        notes: document.getElementById("notes"),
+        newChat: document.getElementById("newChat"),
+        runs: document.getElementById("runs"),
+        runCount: document.getElementById("runCount"),
+        thread: document.getElementById("thread"),
+        composer: document.getElementById("composer"),
+        message: document.getElementById("message"),
+        send: document.getElementById("send"),
+        activeMeta: document.getElementById("activeMeta"),
+        activeStatus: document.getElementById("activeStatus"),
+        graph: document.getElementById("graph"),
+        inspector: document.getElementById("inspector"),
+        stageTitle: document.getElementById("stageTitle"),
+        stageMeta: document.getElementById("stageMeta"),
+        stageModal: document.getElementById("stageModal"),
+        modalTitle: document.getElementById("modalTitle"),
+        modalMeta: document.getElementById("modalMeta"),
+        modalTabs: document.getElementById("modalTabs"),
+        modalBody: document.getElementById("modalBody"),
+        modalClose: document.getElementById("modalClose"),
+      };
+
+      boot();
+
+      async function boot() {
+        await Promise.all([loadGenres(), loadProviders(), loadRuns()]);
+        renderThread();
+        renderGraph();
+        renderInspector();
+      }
+
+      async function loadGenres() {
+        const genres = await api("/genres");
+        els.genre.innerHTML = genres.map((genre) => (
+          `<option value="${escapeHtml(genre.genre_id)}">${escapeHtml(genre.display_name)}</option>`
+        )).join("");
+      }
+
+      async function loadProviders() {
+        const providers = await api("/llm-options");
+        els.provider.innerHTML = providers.map((provider) => (
+          `<option value="${escapeHtml(provider.provider)}">${escapeHtml(provider.label)}</option>`
+        )).join("");
+      }
+
+      async function loadRuns() {
+        state.runs = await api("/runs");
+        els.runCount.textContent = `${state.runs.length} runs`;
+        els.runs.innerHTML = state.runs.map((run) => (
+          `<button class="run-item" data-run="${escapeHtml(run.id)}">
+            <strong>${escapeHtml(run.user_message || "Untitled run")}</strong>
+            <small><span class="status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span> · ${formatTime(run.created_at)}</small>
+          </button>`
+        )).join("");
+        els.runs.querySelectorAll("[data-run]").forEach((button) => {
+          button.addEventListener("click", () => openRun(button.dataset.run));
+        });
+      }
+
+      els.composer.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const text = els.message.value.trim();
+        if (!text) return;
+        els.send.disabled = true;
+        state.messages.push({ role: "user", content: text });
+        state.messages.push({ role: "assistant", content: "Got it. I am setting up the right agents and starting the video run now.", pending: true });
+        renderThread();
+        try {
+          const run = await api("/runs", {
+            method: "POST",
+            body: JSON.stringify({
+              message: text,
+              genre_id: els.genre.value || "scary_stories",
+              notes: els.notes.value || "",
+              llm_provider: els.provider.value || "env",
+              llm_api_key: els.apiKey.value || "",
+            }),
+          });
+          els.message.value = "";
+          setCurrentRun(run);
+          await loadRuns();
+          startPolling(run.id);
+        } catch (error) {
+          state.messages = state.messages.filter((message) => !message.pending);
+          state.messages.push({ role: "assistant", content: friendlyError(error) });
+          renderThread();
+        } finally {
+          els.send.disabled = false;
+        }
+      });
+
+      els.newChat.addEventListener("click", () => {
+        if (state.poll) {
+          clearInterval(state.poll);
+          state.poll = null;
+        }
+        state.currentRun = null;
+        state.selectedStageId = "";
+        state.selectedStage = null;
+        state.messages = [];
+        els.message.value = "";
+        els.activeMeta.textContent = "New chat";
+        els.activeStatus.textContent = "idle";
+        els.activeStatus.className = "pill status";
+        renderThread();
+        renderGraph();
+        renderInspector();
+      });
+
+      els.modalClose.addEventListener("click", closeStageModal);
+      els.stageModal.addEventListener("click", (event) => {
+        if (event.target === els.stageModal) closeStageModal();
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeStageModal();
+      });
+
+      async function openRun(runId) {
+        const run = await api(`/runs/${encodeURIComponent(runId)}`);
+        state.messages = [
+          { role: "user", content: run.raw_user_message || run.user_message || "" },
+          { role: "assistant", content: summaryForRun(run) },
+        ];
+        setCurrentRun(run);
+        if (!terminal.has(run.status)) startPolling(run.id);
+      }
+
+      function startPolling(runId) {
+        if (state.poll) clearInterval(state.poll);
+        state.poll = setInterval(async () => {
+          const run = await api(`/runs/${encodeURIComponent(runId)}`);
+          setCurrentRun(run);
+          if (terminal.has(run.status)) {
+            clearInterval(state.poll);
+            state.poll = null;
+            await loadRuns();
+          }
+        }, 1200);
+      }
+
+      function setCurrentRun(run) {
+        state.currentRun = run;
+        const stageIds = Array.isArray(run.stages) ? run.stages.map((stage) => stage.id) : [];
+        if ((!state.selectedStageId || !stageIds.includes(state.selectedStageId)) && run.stages && run.stages.length) {
+          state.selectedStageId = run.stages[0].id;
+          state.selectedStage = run.stages[0];
+        } else if (state.selectedStageId && Array.isArray(run.stages)) {
+          state.selectedStage = run.stages.find((stage) => stage.id === state.selectedStageId) || state.selectedStage;
+        }
+        const pendingIndex = state.messages.findIndex((message) => message.pending);
+        if (pendingIndex >= 0) {
+          state.messages[pendingIndex] = {
+            role: "assistant",
+            content: summaryForRun(run),
+            pending: !terminal.has(run.status),
+          };
+        }
+        els.activeMeta.textContent = run.route_summary || run.user_message || "Current run";
+        els.activeStatus.textContent = run.status || "idle";
+        els.activeStatus.className = `pill status ${run.status || ""}`;
+        renderThread();
+        renderGraph();
+        loadSelectedStage().then(() => renderInspector());
+        renderInspector();
+      }
+
+      function renderThread() {
+        if (!state.messages.length) {
+          els.thread.innerHTML = `<div class="bubble assistant"><span class="bubble-meta">AI</span>Tell me what video you want. I will route it through the agents and keep the graph updated while I work.</div>`;
+          return;
+        }
+        els.thread.innerHTML = state.messages.map((message) => (
+          `<div class="bubble ${message.role}">
+            <span class="bubble-meta">${message.role === "user" ? "You" : "AI"}</span>
+            ${escapeHtml(message.content)}
+            ${message.pending ? `<div class="thinking" aria-label="Working"><span></span><span></span><span></span></div>` : ""}
+          </div>`
+        )).join("");
+        els.thread.scrollTop = els.thread.scrollHeight;
+      }
+
+      function renderGraph() {
+        const run = state.currentRun;
+        const stages = run && Array.isArray(run.stages) ? run.stages : [];
+        els.graph.innerHTML = stages.map((stage, index) => (
+          `<button class="stage ${escapeHtml(stage.status)} ${stage.id === state.selectedStageId ? "selected" : ""}" data-stage="${escapeHtml(stage.id)}">
+            <div class="node-index">${index + 1}</div>
+            <div class="node-body">
+              <strong>${escapeHtml(label(stage.agent_name || stage.id))}</strong>
+              <small>${escapeHtml(stage.execution_mode || "")} · ${escapeHtml(stage.status || "queued")}</small>
+              <div class="node-badges">
+                ${stage.input_json && Object.keys(stage.input_json).length ? "<em>input</em>" : ""}
+                ${stage.output_json && Object.keys(stage.output_json).length ? "<em>output</em>" : ""}
+                ${stage.artifacts && stage.artifacts.length ? `<em>${stage.artifacts.length} files</em>` : ""}
+              </div>
+              <span>${escapeHtml(stage.events && stage.events.length ? stage.events[stage.events.length - 1].message : stage.prompt_text || "")}</span>
+            </div>
+          </button>`
+        )).join("") || `<div class="stage"><strong>No run</strong><small>Submit a message</small></div>`;
+        els.graph.querySelectorAll("[data-stage]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            state.selectedStageId = button.dataset.stage;
+            await loadSelectedStage();
+            renderGraph();
+            renderInspector();
+            openStageModal();
+          });
+        });
+      }
+
+      async function loadSelectedStage() {
+        if (!state.currentRun || !state.selectedStageId) return;
+        try {
+          state.selectedStage = await api(`/runs/${encodeURIComponent(state.currentRun.id)}/stages/${encodeURIComponent(state.selectedStageId)}`);
+          if (Array.isArray(state.currentRun.stages)) {
+            const index = state.currentRun.stages.findIndex((stage) => stage.id === state.selectedStageId);
+            if (index >= 0) state.currentRun.stages[index] = state.selectedStage;
+          }
+        } catch (error) {
+          state.selectedStage = null;
+          console.warn("Could not load stage details", error);
+        }
+      }
+
+      function renderInspector() {
+        const run = state.currentRun;
+        const stage = state.selectedStage || (run && Array.isArray(run.stages)
+          ? run.stages.find((item) => item.id === state.selectedStageId) || run.stages[0]
+          : null);
+        if (!stage) {
+          els.stageTitle.textContent = "Agent Details";
+          els.stageMeta.textContent = "No stage selected";
+          els.inspector.innerHTML = `<div class="section"><pre>No agent details yet.</pre></div>`;
+          return;
+        }
+        els.stageTitle.textContent = label(stage.agent_name || stage.id);
+        els.stageMeta.textContent = `${stage.status || "queued"} · ${stage.execution_mode || ""}`;
+        els.inspector.innerHTML = [
+          artifactsSection(stage.artifacts || []),
+          detailSection("Input", pretty(stage.input_json)),
+          detailSection("Output", pretty(stage.output_json)),
+          eventsSection(stage.events || []),
+          detailSection("Prompt / Message Base", stage.prompt_text || "", false),
+          stage.error_text ? detailSection("Error", stage.error_text) : "",
+          `<button class="ghost" id="openStageModal" type="button">Open Full Details</button>`,
+        ].join("");
+        const openButton = document.getElementById("openStageModal");
+        if (openButton) openButton.addEventListener("click", openStageModal);
+      }
+
+      function openStageModal(tab = state.modalTab || "artifacts") {
+        const stage = currentStage();
+        if (!stage) return;
+        state.modalTab = tab;
+        els.stageModal.classList.add("open");
+        els.stageModal.setAttribute("aria-hidden", "false");
+        renderStageModal();
+      }
+
+      function closeStageModal() {
+        els.stageModal.classList.remove("open");
+        els.stageModal.setAttribute("aria-hidden", "true");
+      }
+
+      function renderStageModal() {
+        const stage = currentStage();
+        if (!stage) return;
+        const tabs = [
+          ["artifacts", `Artifacts (${(stage.artifacts || []).length})`],
+          ["input", "Input"],
+          ["output", "Output"],
+          ["events", `Events (${(stage.events || []).length})`],
+          ["prompt", "Prompt"],
+          ...(stage.error_text ? [["error", "Error"]] : []),
+        ];
+        if (!tabs.some(([id]) => id === state.modalTab)) state.modalTab = "artifacts";
+        els.modalTitle.textContent = label(stage.agent_name || stage.id);
+        els.modalMeta.textContent = `${stage.status || "queued"} · ${stage.execution_mode || ""}`;
+        els.modalTabs.innerHTML = tabs.map(([id, text]) => (
+          `<button class="modal-tab ${id === state.modalTab ? "active" : ""}" data-tab="${id}" type="button">${escapeHtml(text)}</button>`
+        )).join("");
+        els.modalTabs.querySelectorAll("[data-tab]").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.modalTab = button.dataset.tab;
+            renderStageModal();
+          });
+        });
+        els.modalBody.innerHTML = modalContent(stage, state.modalTab);
+      }
+
+      function modalContent(stage, tab) {
+        if (tab === "artifacts") return `<div class="section">${artifactsGrid(stage.artifacts || [])}</div>`;
+        if (tab === "input") return `<pre>${escapeHtml(pretty(stage.input_json) || "No input yet.")}</pre>`;
+        if (tab === "output") return `<pre>${escapeHtml(pretty(stage.output_json) || "No output yet.")}</pre>`;
+        if (tab === "events") return `<div class="section"><div class="event-list">${eventsBody(stage.events || [])}</div></div>`;
+        if (tab === "prompt") return `<pre>${escapeHtml(stage.prompt_text || "No prompt for this stage.")}</pre>`;
+        if (tab === "error") return `<pre>${escapeHtml(stage.error_text || "No error.")}</pre>`;
+        return `<pre>No data.</pre>`;
+      }
+
+      function currentStage() {
+        const run = state.currentRun;
+        return state.selectedStage || (run && Array.isArray(run.stages)
+          ? run.stages.find((item) => item.id === state.selectedStageId) || run.stages[0]
+          : null);
+      }
+
+      function detailSection(title, content, open = true) {
+        return `<details class="section" ${open ? "open" : ""}>
+          <summary>${escapeHtml(title)}</summary>
+          <pre>${escapeHtml(content || "No data yet.")}</pre>
+        </details>`;
+      }
+
+      function eventsSection(events) {
+        return `<details class="section" open><summary>Events</summary><div class="event-list">${eventsBody(events)}</div></details>`;
+      }
+
+      function eventsBody(events) {
+        return events.length ? events.slice().reverse().map((event) => (
+          `<div class="event">
+            <strong>${escapeHtml(event.message || "Event")}</strong>
+            <small>${formatTime(event.timestamp)} · ${escapeHtml(event.level || "info")}</small>
+            <pre>${escapeHtml(pretty(event.payload_json || {}))}</pre>
+          </div>`
+        )).join("") : `<small>No events yet.</small>`;
+      }
+
+      function artifactsSection(artifacts) {
+        return `<details class="section" open><summary>Artifacts</summary>${artifactsGrid(artifacts)}</details>`;
+      }
+
+      function artifactsGrid(artifacts) {
+        const body = artifacts.length ? artifacts.map((artifact) => {
+          const url = `${API}/artifacts/${encodeURIComponent(artifact.id)}`;
+          const name = artifact.path ? artifact.path.split("/").pop() : artifact.kind;
+          let preview = "";
+          if (artifact.kind === "image") preview = `<img src="${url}" alt="${escapeHtml(name)}" loading="lazy" />`;
+          if (artifact.kind === "video") preview = `<video src="${url}" controls></video>`;
+          if (artifact.kind === "audio") preview = `<audio src="${url}" controls></audio>`;
+          return `<div class="artifact">
+            <strong>${escapeHtml(name || "Artifact")}</strong>
+            ${preview}
+            <a href="${url}" target="_blank" rel="noreferrer">Open file</a>
+          </div>`;
+        }).join("") : `<small>No artifacts yet.</small>`;
+        return `<div class="artifact-grid">${body}</div>`;
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(`${API}${path}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        if (!response.ok) {
+          let message = response.statusText;
+          try {
+            const data = await response.json();
+            message = data.detail || message;
+          } catch (_error) {}
+          throw new Error(message);
+        }
+        return response.json();
+      }
+
+      function summaryForRun(run) {
+        const stages = Array.isArray(run.stages) ? run.stages : [];
+        const active = [...stages].reverse().find((stage) => stage.status === "running")
+          || stages.find((stage) => stage.status === "failed")
+          || stages.find((stage) => stage.status === "queued")
+          || stages[stages.length - 1];
+        const activeName = label(active && active.agent_name || "Agent");
+        if (run.status === "succeeded") {
+          return "Done. I finished the video run and collected the final output, thumbnails, logs, and artifacts. You can click any agent node to inspect exactly what happened.";
+        }
+        if (run.status === "failed") {
+          return `I hit a problem while ${activeName} was working. I saved the available inputs, logs, and partial artifacts so you can open that node and inspect what went wrong.`;
+        }
+        if (active && active.id === "asset_agent") {
+          return "I am searching and ranking visuals now. I am checking the available sources, avoiding repeats, and keeping the best matched assets for the timeline.";
+        }
+        if (active && active.id === "script_agent") {
+          return "I am writing and validating the script now. I am keeping it aligned with your prompt and the selected genre.";
+        }
+        if (active && active.id === "audio_agent") {
+          return "I am generating the narration audio and timing data now, so captions and visuals can stay in sync.";
+        }
+        if (active && active.id === "render_agent") {
+          return "I am rendering the final video now. This can take a little while because audio, captions, visuals, and timing are being assembled together.";
+        }
+        return `I am working through ${activeName} now. The graph is updating as each agent finishes, and you can click any node for full details.`;
+      }
+
+      function friendlyError(error) {
+        const text = error && error.message ? error.message : String(error || "Unknown error");
+        return `I could not start that run yet. The backend said: ${text}`;
+      }
+
+      function pretty(value) {
+        if (value === null || value === undefined || value === "") return "";
+        if (typeof value === "string") return value;
+        return JSON.stringify(value, null, 2);
+      }
+
+      function label(value) {
+        return String(value || "")
+          .replaceAll("_", " ")
+          .replace(/\b\w/g, (char) => char.toUpperCase());
+      }
+
+      function formatTime(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+    </script>
+  </body>
+</html>

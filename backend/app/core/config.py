@@ -48,10 +48,10 @@ def _database_url() -> str:
     explicit = _env("DATABASE_URL")
     if explicit:
         return explicit
-    user = _env("POSTGRES_USER", "playground")
-    password = _env("POSTGRES_PASSWORD", "playground")
-    db = _env("POSTGRES_DB", "playground")
-    host = _env("POSTGRES_HOST", "db")
+    user = _env("POSTGRES_USER", _env("APP_DB_USER", "pradeep"))
+    password = _env("POSTGRES_PASSWORD", _env("APP_DB_PASSWORD", "password"))
+    db = _env("POSTGRES_DB", _env("APP_DB_NAME", "automation"))
+    host = _env("POSTGRES_HOST", "db_common")
     port = _env("POSTGRES_PORT", "5432")
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"
 
