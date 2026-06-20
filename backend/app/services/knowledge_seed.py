@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from datetime import date
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from app.models import (
     GenreRule,
     ReferenceVideo,
     ScriptAnalysis,
+    SfxAsset,
     TopicExpansionRule,
     TopicResearchSource,
     VisualStyleRule,
@@ -52,7 +55,116 @@ DEFAULT_GENRES = [
         "visual_keywords": "family dinner, phone message, apartment living room, tense conversation",
         "negative_visual_keywords": "celebrity, cartoon, fantasy",
     },
+    {
+        "id": "comics",
+        "display_name": "Comics",
+        "category": "story",
+        "tone": "Bold comic-book narration with heroic stakes, clear conflict, fast visual beats, and simple words.",
+        "caption_preset": "clean_pro",
+        "music_mood": "heroic pulse",
+        "hooks": ["Every great comic fight starts with {conflict}.", "The panel that changes everything is {detail}."],
+        "visual_keywords": "comic hero, city rooftop, masked figure, villain shadow, action lines, speech bubble",
+        "negative_visual_keywords": "movie still, actor face, studio logo, gore",
+    },
 ]
+
+SFX_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"}
+SFX_HINTS = {
+    "bass-impact": {
+        "description": "Low bass impact for heavy hits, deep rumbles, growls, or ominous reveals.",
+        "tags": ["bass", "impact", "boom", "thud", "rumble", "growl", "reveal"],
+        "aliases": ["deep_growl", "low_rumble", "bass_hit", "heavy_thud", "dramatic_impact", "soft_hit"],
+        "use_cases": ["deep creature growl substitute", "dramatic reveal", "heavy hit", "ominous beat"],
+        "intensity": "high",
+    },
+    "digital-glitch-noise-hd": {
+        "description": "Harsh digital glitch noise for corrupted screens, static, and tech failure.",
+        "tags": ["digital", "glitch", "static", "noise", "error", "tech"],
+        "aliases": ["static_glitch", "digital_static", "tv_static", "screen_glitch", "signal_glitch"],
+        "use_cases": ["corrupted screen", "security camera glitch", "tech failure", "horror static"],
+        "intensity": "medium",
+    },
+    "ding": {
+        "description": "Short clean ding for small notifications, clues, or UI-style confirmation.",
+        "tags": ["ding", "notification", "beep", "clue", "small"],
+        "aliases": ["soft_ding", "clue_ding", "message_ding", "camera_shutter", "paper_rustle"],
+        "use_cases": ["small clue reveal", "message arrives", "light confirmation"],
+        "intensity": "low",
+    },
+    "error": {
+        "description": "Short error tone for warnings, failed actions, alarms, or danger beats.",
+        "tags": ["error", "beep", "warning", "alarm", "fail"],
+        "aliases": ["error_beep", "warning_beep", "alarm_beep", "system_error"],
+        "use_cases": ["warning moment", "system failure", "wrong choice", "alarm beat"],
+        "intensity": "medium",
+    },
+    "glitch-sfx": {
+        "description": "Compact glitch hit for jumpy edits, distortion, static, and reveal accents.",
+        "tags": ["glitch", "static", "digital", "distortion", "hit"],
+        "aliases": ["static_glitch", "glitch_hit", "distortion_hit", "screen_glitch"],
+        "use_cases": ["quick glitch transition", "distorted reveal", "screen interruption"],
+        "intensity": "medium",
+    },
+    "impact-cinematic-boom": {
+        "description": "Cinematic boom impact for smashes, cracks, collisions, thunder, and major reveals.",
+        "tags": ["impact", "boom", "smash", "crack", "stone", "concrete", "thunder", "metal", "reveal"],
+        "aliases": [
+            "concrete_smash",
+            "stone_crack",
+            "glass_crack",
+            "mirror_crack",
+            "metal_impact",
+            "thunder_hit",
+            "door_slam",
+            "heavy_impact",
+            "soft_hit",
+        ],
+        "use_cases": ["object breaking", "hard collision", "thunder hit", "dramatic reveal", "metal hit"],
+        "intensity": "high",
+    },
+    "minecraft-damage": {
+        "description": "Short damage hit for punches, comedic hits, light impacts, or game-like damage.",
+        "tags": ["damage", "hit", "punch", "impact", "game"],
+        "aliases": ["damage_hit", "punch_hit", "small_impact", "fight_hit"],
+        "use_cases": ["quick punch", "small damage beat", "playful impact"],
+        "intensity": "medium",
+    },
+    "notification": {
+        "description": "Notification sound for phone buzzes, message alerts, reminders, and attention beats.",
+        "tags": ["notification", "phone", "message", "buzz", "ding", "alert"],
+        "aliases": ["phone_buzz", "phone_notification", "message_alert", "text_message", "phone_alert"],
+        "use_cases": ["phone message", "new alert", "social media notification", "attention beat"],
+        "intensity": "low",
+    },
+    "riser": {
+        "description": "Rising tension sound for suspense builds, transitions, and pre-reveal moments.",
+        "tags": ["riser", "suspense", "build", "transition", "tension", "whoosh"],
+        "aliases": ["suspense_riser", "tension_build", "horror_riser", "slow_build", "door_creak", "heartbeat"],
+        "use_cases": ["build suspense", "lead into reveal", "transition between beats", "horror tension"],
+        "intensity": "medium",
+    },
+    "simple-whoosh": {
+        "description": "Simple whoosh for quick movement, transitions, swipes, and fast cuts.",
+        "tags": ["whoosh", "swoosh", "transition", "movement", "swipe"],
+        "aliases": ["fast_whoosh", "transition_whoosh", "swipe_whoosh", "quick_whoosh", "metal_whoosh"],
+        "use_cases": ["quick visual transition", "fast movement", "swipe edit", "action movement"],
+        "intensity": "low",
+    },
+    "whoosh-effect": {
+        "description": "Whoosh effect for larger transitions, movement sweeps, and action passes.",
+        "tags": ["whoosh", "transition", "movement", "sweep", "swoosh"],
+        "aliases": ["big_whoosh", "transition_whoosh", "movement_whoosh", "metal_whoosh"],
+        "use_cases": ["strong transition", "action sweep", "large motion pass"],
+        "intensity": "medium",
+    },
+    "windows-error-sound-effect": {
+        "description": "Classic-style error sound for computer failure, warnings, or uncomfortable mistakes.",
+        "tags": ["windows", "error", "beep", "computer", "warning"],
+        "aliases": ["windows_error", "computer_error", "system_error", "error_beep"],
+        "use_cases": ["computer warning", "failed action", "awkward mistake", "system alert"],
+        "intensity": "medium",
+    },
+}
 
 
 def seed_pipeline_knowledge(db: Session) -> None:
@@ -71,6 +183,7 @@ def seed_pipeline_knowledge(db: Session) -> None:
         _ensure_visual_style(db, genre.id, item)
     _ensure_topic_expansion_rules(db)
     _ensure_reference_examples(db)
+    _ensure_sfx_assets(db)
     db.commit()
 
 
@@ -102,6 +215,119 @@ def _ensure_visual_style(db: Session, genre_id: str, item: dict[str, str]) -> No
     style.visual_keywords = item["visual_keywords"]
     style.negative_visual_keywords = item["negative_visual_keywords"]
     style.source_policy = "stock_video_first"
+
+
+def _ensure_sfx_assets(db: Session) -> None:
+    seen_ids: set[str] = set()
+    for sfx_dir in _candidate_sfx_dirs():
+        if not sfx_dir.is_dir():
+            continue
+        for path in sorted(
+            (item for item in sfx_dir.rglob("*") if item.is_file() and item.suffix.lower() in SFX_EXTENSIONS),
+            key=lambda item: item.name.lower(),
+        ):
+            asset_id = _sfx_asset_id(path)
+            if asset_id in seen_ids:
+                continue
+            seen_ids.add(asset_id)
+            metadata = _sfx_metadata(path)
+            row = db.get(SfxAsset, asset_id)
+            if row is None:
+                row = SfxAsset(id=asset_id)
+                db.add(row)
+            row.name = _title_from_id(asset_id)
+            row.path = str(path.resolve())
+            row.description = metadata["description"]
+            row.tags = metadata["tags"]
+            row.aliases = metadata["aliases"]
+            row.use_cases = metadata["use_cases"]
+            row.intensity = metadata["intensity"]
+            row.source = "local_seed"
+            row.enabled = True
+
+
+def _candidate_sfx_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    for env_name in ("PLAYGROUND_PIPELINE_DATA_DIR", "MODULARSHORTS_DATA_DIR"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            candidates.append(Path(value) / "assets" / "sfx")
+    backend_or_repo_root = Path(__file__).resolve().parents[2]
+    repo_root = backend_or_repo_root.parent if (backend_or_repo_root.parent / "playground").exists() else backend_or_repo_root
+    candidates.extend(
+        [
+            repo_root / "playground" / "data" / "pipeline" / "assets" / "sfx",
+            repo_root / "backend" / "data" / "pipeline" / "assets" / "sfx",
+            repo_root / "final_pipeline" / "data" / "assets" / "sfx",
+        ]
+    )
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(path)
+    return deduped
+
+
+def _sfx_metadata(path: Path) -> dict[str, list[str] | str]:
+    hint = _sfx_hint(path.stem)
+    tags = _dedupe_text([*hint.get("tags", []), *_sfx_stem_tokens(path.stem)])
+    aliases = _dedupe_text([*hint.get("aliases", []), _sfx_asset_id(path)])
+    use_cases = _dedupe_text(hint.get("use_cases", []))
+    return {
+        "description": str(hint.get("description") or f"{_title_from_id(_sfx_asset_id(path))} sound effect."),
+        "tags": tags,
+        "aliases": aliases,
+        "use_cases": use_cases,
+        "intensity": str(hint.get("intensity") or _guess_sfx_intensity(tags)),
+    }
+
+
+def _sfx_hint(stem: str) -> dict[str, list[str] | str]:
+    normalized = _normalized_sfx_text(stem)
+    for key, hint in SFX_HINTS.items():
+        if normalized.startswith(key):
+            return hint
+    return {}
+
+
+def _sfx_asset_id(path: Path) -> str:
+    tokens = [token for token in _sfx_stem_tokens(path.stem) if not token.isdigit()]
+    return "_".join(tokens) or "sfx_asset"
+
+
+def _sfx_stem_tokens(stem: str) -> list[str]:
+    normalized = _normalized_sfx_text(stem)
+    return [token for token in normalized.split("-") if token and not re.fullmatch(r"\d{4,}", token)]
+
+
+def _normalized_sfx_text(value: str) -> str:
+    text = str(value or "").lower().replace("_", "-")
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+
+
+def _title_from_id(asset_id: str) -> str:
+    return " ".join(part.capitalize() for part in str(asset_id or "SFX").split("_"))
+
+
+def _guess_sfx_intensity(tags: list[str]) -> str:
+    joined = " ".join(tags)
+    if any(term in joined for term in ("boom", "impact", "smash", "thunder", "damage")):
+        return "high"
+    if any(term in joined for term in ("glitch", "riser", "error", "whoosh")):
+        return "medium"
+    return "low"
+
+
+def _dedupe_text(values: list[object]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _ensure_reference_examples(db: Session) -> None:

@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from app.schemas import GenreConfig, NicheProfile, TopicCandidate, TopicDiscoveryOutput
+from modules.assets.subject_lock import infer_subject_lock
 from modules.discovery.scoring import keywords_from_text, score_result
 from modules.discovery.sources import SearchResult, search_duckduckgo, search_reddit, search_wikimedia
 
@@ -107,10 +108,16 @@ def _results_to_candidates(
         angle = _angle_from_keywords(keywords) or _angle_from_title(result.title)
         hook = _hook_from_result(result, topic)
         score = score_result(result, topic, genre_terms) + _plan_overlap_score(result, grounding_plan)
+        candidate_topic = f"{topic} - {angle}" if angle and angle.lower() not in topic.lower() else topic
+        candidate_angle = angle or topic
+        if not _angle_can_extend_topic(topic, angle):
+            candidate_topic = topic
+            candidate_angle = topic
+            score -= 0.75
         candidates.append(
             TopicCandidate(
-                topic=f"{topic} - {angle}" if angle and angle.lower() not in topic.lower() else topic,
-                angle=angle or topic,
+                topic=candidate_topic,
+                angle=candidate_angle,
                 hook=hook,
                 score=round(score, 3),
                 source=result.source,
@@ -129,6 +136,24 @@ def _is_relevant_result(result: SearchResult, topic: str, grounding_plan: dict[s
         return False
     required = _plan_terms(grounding_plan) or keywords_from_text(topic, 6)
     return not required or any(term in haystack for term in required)
+
+
+def _angle_can_extend_topic(topic: str, angle: str) -> bool:
+    angle_terms = set(keywords_from_text(angle, 10))
+    if not angle_terms:
+        return False
+    subject_lock = infer_subject_lock(topic)
+    if not subject_lock.enabled:
+        topic_terms = set(keywords_from_text(topic, 10))
+        return bool(topic_terms.intersection(angle_terms))
+    subject_terms = set(keywords_from_text(subject_lock.subject, 10))
+    if subject_terms and subject_terms.issubset(angle_terms):
+        return True
+    for alias in (subject_lock.subject, *subject_lock.aliases):
+        alias_terms = set(keywords_from_text(alias, 10))
+        if alias_terms and alias_terms.issubset(angle_terms):
+            return True
+    return False
 
 
 def _plan_overlap_score(result: SearchResult, grounding_plan: dict[str, Any]) -> float:

@@ -320,6 +320,24 @@ class VisualStyleRule(Base):
     genre: Mapped[Genre] = relationship(back_populates="visual_style")
 
 
+class SfxAsset(Base):
+    __tablename__ = "sfx_assets"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), default="")
+    path: Mapped[str] = mapped_column(Text, unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    use_cases: Mapped[list] = mapped_column(JSON, default=list)
+    intensity: Mapped[str] = mapped_column(String(40), default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(80), default="local")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class TopicExpansionRule(Base):
     __tablename__ = "topic_expansion_rules"
     __table_args__ = (UniqueConstraint("genre_id", "trigger_term", name="uq_topic_expansion_rule"),)

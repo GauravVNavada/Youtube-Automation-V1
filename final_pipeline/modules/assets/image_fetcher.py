@@ -5,6 +5,8 @@ import hashlib
 from pathlib import Path
 from typing import Any, Callable
 
+from PIL import Image, UnidentifiedImageError
+
 from app.schemas import GenreConfig, ImageCue
 from modules.assets.candidates import AssetCandidate
 from modules.assets.duckduckgo import search_duckduckgo_images
@@ -143,9 +145,11 @@ def download_image_candidate(
     image_dir.mkdir(parents=True, exist_ok=True)
     target = image_dir / f"{_candidate_file_stem(cue.keyword, candidate.url)}.jpg"
     if target.exists() and not cue.subject_lock:
+        _normalize_downloaded_image(target)
         _record(diagnostics, source="cache", stage="image", status="hit", path=str(target), url=candidate.url)
         return str(target)
     path = download_image(candidate.url, target)
+    _normalize_downloaded_image(Path(path))
     _record(
         diagnostics,
         source=candidate.source,
@@ -158,6 +162,16 @@ def download_image_candidate(
         path=path,
     )
     return path
+
+
+def _normalize_downloaded_image(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            image.load()
+            rgb_image = image.convert("RGB")
+            rgb_image.save(path, format="JPEG", quality=92, optimize=True)
+    except (OSError, UnidentifiedImageError) as exc:
+        raise RuntimeError(f"Downloaded image is not a valid renderable image: {path}") from exc
 
 
 def _asset_candidate_summary(candidate: AssetCandidate) -> dict[str, Any]:

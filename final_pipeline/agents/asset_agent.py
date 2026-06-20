@@ -7,6 +7,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from agents.base import BaseAgent
 from agents.prompts.asset_prompts import (
@@ -24,6 +25,7 @@ from modules.assets.intent_generator import build_asset_intent_profile
 from modules.assets.image_fetcher import download_image_candidate, search_image_candidates
 from modules.assets.subject_lock import source_allowed_for_cue, subject_lock_repair_issue
 from modules.assets.video_fetcher import download_video_candidate, search_video_candidates
+from modules.audio.sfx_catalog import resolve_sfx_cues
 from modules.visuals.timed_cues import timed_cue_to_image_cue
 
 
@@ -195,14 +197,35 @@ class AssetAgent(BaseAgent):
             )
             self.event("Asset source attempts", keyword=fetch_cue.keyword, attempts=source_attempts)
 
-        music_path = _pick_music_track()
-        if music_path:
-            self.event("Background music ready", path=music_path)
+        music_path = None
+        self.event("Background music deferred to music agent")
+        sfx_paths, sfx_selection_trace = _resolve_sfx(sfx_cues)
+        sfx_asset_ids = [
+            str(item.get("sfx_id"))
+            for item in sfx_selection_trace
+            if isinstance(item, dict) and item.get("status") == "matched" and item.get("sfx_id")
+        ]
+        sfx_asset_names = [
+            str(item.get("sfx_name"))
+            for item in sfx_selection_trace
+            if isinstance(item, dict) and item.get("status") == "matched" and item.get("sfx_name")
+        ]
+        if sfx_paths:
+            self.event(
+                "SFX ready",
+                sfx_count=len(sfx_paths),
+                sfx_ids=sfx_asset_ids,
+                sfx_files=[Path(path).name for path in sfx_paths],
+            )
+        elif sfx_cues:
+            self.event("No matching SFX found in local library", cue_count=len(sfx_cues))
         asset_trace_path = _write_asset_trace(self.run_dir, asset_selection_trace)
         timed_visual_cues_path = _existing_timed_visual_cues_path(self.run_dir)
         bundle = AssetBundle(
             image_paths=image_paths,
-            sfx_paths=[],
+            sfx_paths=sfx_paths,
+            sfx_asset_ids=sfx_asset_ids,
+            sfx_asset_names=sfx_asset_names,
             music_path=music_path,
             sources=sources,
             video_paths=video_paths,
@@ -211,6 +234,7 @@ class AssetAgent(BaseAgent):
             stock_video_search_terms=stock_video_search_terms,
             subject_lock_issues=subject_lock_issues,
             asset_selection_trace=asset_selection_trace,
+            sfx_selection_trace=sfx_selection_trace,
             asset_trace_path=asset_trace_path,
             media_start_ms=media_start_ms,
             media_end_ms=media_end_ms,
@@ -225,6 +249,7 @@ class AssetAgent(BaseAgent):
             image_count=len(image_paths),
             media_count=len(media_paths),
             timed_media_count=len(media_durations_ms),
+            sfx_count=len(sfx_paths),
             subject_lock_issues=subject_lock_issues,
             asset_trace_path=asset_trace_path,
             timed_visual_cues_path=timed_visual_cues_path,
@@ -288,6 +313,10 @@ def _rewrite_asset_query(cue: ImageCue, genre: GenreConfig, provider) -> tuple[I
 def _mentions_subject(text: str, cue: ImageCue) -> bool:
     lower = text.lower()
     return any(str(item).lower() in lower for item in [*cue.required_subjects, *cue.aliases] if str(item).strip())
+
+
+def _resolve_sfx(sfx_cues: list[SfxCue]) -> tuple[list[str], list[dict[str, Any]]]:
+    return resolve_sfx_cues(sfx_cues, DATA_DIR / "assets" / "sfx")
 
 
 def _asset_cue_pairs(

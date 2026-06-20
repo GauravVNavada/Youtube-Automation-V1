@@ -25,6 +25,10 @@ def render_video(
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
+    visual_motion: bool = True,
+    transition_style: str = "slide",
+    transition_seconds: float | None = None,
+    zoom_variant: str = "mixed",
 ) -> dict:
     """Render final MP4 via FFmpeg and validate it with ffprobe."""
     ffmpeg = shutil.which("ffmpeg")
@@ -60,6 +64,10 @@ def render_video(
             height=height,
             fps=fps,
             media_durations_ms=media_durations_ms,
+            visual_motion=visual_motion,
+            transition_style=transition_style,
+            transition_seconds=transition_seconds,
+            zoom_variant=zoom_variant,
         )
     else:
         cmd = build_image_slideshow_command(
@@ -74,6 +82,10 @@ def render_video(
             width=width,
             height=height,
             fps=fps,
+            visual_motion=visual_motion,
+            transition_style=transition_style,
+            transition_seconds=transition_seconds,
+            zoom_variant=zoom_variant,
         )
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:

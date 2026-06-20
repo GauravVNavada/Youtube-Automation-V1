@@ -43,6 +43,23 @@ EXAMPLES = [
             }
         ),
     },
+    {
+        "role": "user",
+        "content": compact_json({"message": "the script does not look good, it feels random", "current_settings": {}}),
+    },
+    {
+        "role": "assistant",
+        "content": compact_json(
+            {
+                "target_agent": "script_agent",
+                "settings_patch": {},
+                "agent_instructions": {
+                    "script_agent": "Regenerate the script around the original source prompt. Keep the same subject, remove random or unrelated beats, and use a fresh coherent angle."
+                },
+                "reason": "script quality or topic alignment needs repair",
+            }
+        ),
+    },
 ]
 
 
@@ -90,6 +107,33 @@ def map_parameter_request(message: str, current_settings: dict[str, Any] | None 
             target = target or "asset_agent"
             reasons.append("visual assets need replacement")
 
+    if _mentions(text, "script", "story", "narration", "hook", "writing", "plot", "content"):
+        if _mentions(
+            text,
+            "bad",
+            "wrong",
+            "random",
+            "unusual",
+            "weird",
+            "generic",
+            "boring",
+            "better",
+            "improve",
+            "not good",
+            "look good",
+            "doesnt",
+            "doesn't",
+            "does not",
+            "off topic",
+            "unrelated",
+        ):
+            instructions["script_agent"] = (
+                "Regenerate the script around the original source prompt. Keep the same named subject, "
+                "remove random or unrelated beats, and use a fresh coherent angle instead of treating the follow-up complaint as the topic."
+            )
+            target = target or "script_agent"
+            reasons.append("script quality or topic alignment needs repair")
+
     music_volume = _float(settings.get("music_volume"), 0.18)
     if _mentions(text, "music", "background", "bgm", "song"):
         if _mentions(text, "loud", "high", "overpower"):
@@ -120,7 +164,6 @@ def looks_like_edit_request(message: str) -> bool:
     edit_words = {
         "change",
         "fix",
-        "make",
         "remake",
         "redo",
         "again",
@@ -136,6 +179,16 @@ def looks_like_edit_request(message: str) -> bool:
         "not good",
         "same",
         "repeat",
+        "random",
+        "unusual",
+        "weird",
+        "generic",
+        "boring",
+        "better",
+        "improve",
+        "off topic",
+        "doesnt",
+        "doesn't",
     }
     return any(word in text for word in edit_words)
 

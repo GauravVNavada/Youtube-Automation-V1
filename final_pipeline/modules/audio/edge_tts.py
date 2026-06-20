@@ -11,7 +11,7 @@ def synthesize_edge_tts(
     text: str,
     output_path: Path,
     voice_name: str = DEFAULT_EDGE_VOICE,
-    speaking_rate: float = 1.0,
+    speaking_rate: float | None = None,
 ) -> str:
     try:
         import edge_tts
@@ -22,8 +22,11 @@ def synthesize_edge_tts(
     return str(output_path)
 
 
-async def _synthesize(edge_tts, text: str, output_path: Path, voice_name: str, speaking_rate: float) -> None:
-    communicate = edge_tts.Communicate(text=text, voice=voice_name, rate=_edge_rate(speaking_rate))
+async def _synthesize(edge_tts, text: str, output_path: Path, voice_name: str, speaking_rate: float | None) -> None:
+    kwargs = {"text": text, "voice": voice_name}
+    if speaking_rate is not None:
+        kwargs["rate"] = _edge_rate(speaking_rate)
+    communicate = edge_tts.Communicate(**kwargs)
     await communicate.save(str(output_path))
 
 

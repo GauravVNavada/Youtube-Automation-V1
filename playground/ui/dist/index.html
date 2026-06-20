@@ -177,6 +177,30 @@
         resize: vertical;
       }
 
+      .music-picker {
+        display: grid;
+        gap: 6px;
+      }
+
+      .music-picker > label {
+        display: block;
+      }
+
+      .music-upload-status {
+        min-height: 18px;
+        color: var(--muted);
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+
+      .music-upload-status.selected {
+        color: var(--accent);
+      }
+
+      .music-upload-status.error {
+        color: var(--rose);
+      }
+
       .runs {
         display: grid;
         align-content: start;
@@ -393,7 +417,7 @@
         text-align: left;
         padding: 12px;
         display: grid;
-        grid-template-columns: 36px 1fr;
+        grid-template-columns: 36px 1fr 34px;
         gap: 10px;
         align-items: center;
         border-radius: var(--radius);
@@ -401,6 +425,57 @@
         background: var(--panel);
         position: relative;
         box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .stage-select {
+        display: contents;
+        text-align: inherit;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+      }
+
+      .stage-select:hover:not(:disabled),
+      .stage-select:active:not(:disabled) {
+        background: transparent;
+        transform: none;
+      }
+
+      .stage-select:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 4px;
+        border-radius: var(--radius);
+      }
+
+      .node-rerun,
+      .stage-rerun {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border-radius: 999px;
+        background: var(--muted-bg);
+      }
+
+      .stage-rerun {
+        width: auto;
+        padding: 0 12px;
+        grid-auto-flow: column;
+        gap: 7px;
+      }
+
+      .node-rerun svg,
+      .stage-rerun svg {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+      }
+
+      .node-rerun.is-busy svg,
+      .stage-rerun.is-busy svg {
+        animation: spin 900ms linear infinite;
       }
 
       .stage.selected {
@@ -445,6 +520,12 @@
         }
         100% {
           box-shadow: 0 0 0 0 transparent;
+        }
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
         }
       }
 
@@ -551,6 +632,12 @@
         background: var(--muted-bg);
       }
 
+      .node-badges em.loop-badge {
+        color: var(--warning);
+        border-color: color-mix(in srgb, var(--warning) 55%, var(--line));
+        background: color-mix(in srgb, var(--warning) 12%, transparent);
+      }
+
       .inspector {
         overflow: auto;
         padding: 16px;
@@ -626,6 +713,144 @@
       .artifact a {
         color: var(--accent);
         overflow-wrap: anywhere;
+      }
+
+      .control-panel {
+        display: grid;
+        gap: 12px;
+      }
+
+      .control-card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: var(--radius);
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .control-card h3 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .control-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .control-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .control-grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .control-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .control-row button,
+      .apply-rerun {
+        min-height: 34px;
+        padding: 7px 10px;
+      }
+
+      .control-row button.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+      }
+
+      .control-field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .control-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .control-line small,
+      .control-value {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .control-value {
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .control-field input[type="range"] {
+        padding: 0;
+        accent-color: var(--primary);
+      }
+
+      .control-field input[type="checkbox"] {
+        width: auto;
+      }
+
+      .instruction-box {
+        min-height: 76px;
+      }
+
+      .toggle-field {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 40px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: hsl(222.2 47.4% 6.2%);
+      }
+
+      .toggle-field span {
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .control-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .apply-rerun {
+        display: inline-grid;
+        grid-auto-flow: column;
+        place-content: center;
+        align-items: center;
+        gap: 8px;
+        background: color-mix(in srgb, var(--primary) 18%, var(--secondary));
+        border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+      }
+
+      .settings-preview {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .settings-preview span {
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        background: var(--muted-bg);
       }
 
       .modal {
@@ -762,6 +987,11 @@
           grid-template-columns: 1fr;
         }
 
+        .control-grid,
+        .control-grid.three {
+          grid-template-columns: 1fr;
+        }
+
         .topbar,
         .modal-head {
           align-items: flex-start;
@@ -800,6 +1030,11 @@
             Gemini key
             <input id="apiKey" type="password" autocomplete="off" placeholder="Optional for playground" />
           </label>
+          <div class="music-picker">
+            <label for="musicFile">Music</label>
+            <input id="musicFile" type="file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*" />
+            <span class="music-upload-status" id="musicStatus">No music selected</span>
+          </div>
           <label>
             Notes
             <textarea id="notes" rows="3"></textarea>
@@ -850,6 +1085,7 @@
 
     <script>
       const API = "/api/playground";
+      const MAX_MUSIC_UPLOAD_BYTES = 300 * 1024 * 1024;
       const terminal = new Set(["succeeded", "failed", "skipped"]);
       const state = {
         runs: [],
@@ -859,12 +1095,183 @@
         modalTab: "artifacts",
         messages: [],
         poll: null,
+        rerunningStageId: "",
+        controlSettings: {},
+        stageInstructions: {},
+        musicUpload: null,
+        musicPathOverride: null,
+      };
+
+      const DEFAULT_SETTINGS = {
+        voice_speed: 1.0,
+        caption_words: 4,
+        image_count: 8,
+        music_volume: 0.12,
+        min_visual_segment_ms: 3500,
+        visual_motion: true,
+        transition_style: "slide",
+        transition_seconds: 0.45,
+        zoom_variant: "mixed",
+      };
+
+      const STAGE_OPTIONS = {
+        desktop_master_agent: {
+          title: "Routing",
+          quick: [
+            ["Route as edit", "Treat this as an edit/remake of the current video, preserving the original topic."],
+            ["Keep same topic", "Preserve the original source prompt and named subject exactly."],
+            ["Fresh route", "Re-evaluate the route from the beginning using the current message and settings."],
+          ],
+        },
+        style_sampler_agent: {
+          title: "Style Samples",
+          quick: [
+            ["More cinematic", "Generate a more cinematic style direction with stronger pacing and visual contrast."],
+            ["Cleaner pacing", "Prefer cleaner pacing and fewer abrupt creative choices."],
+            ["High energy", "Favor punchier samples with faster hooks and stronger retention beats."],
+          ],
+        },
+        parameter_agent: {
+          title: "Parameter Mapping",
+          quick: [
+            ["Use selected knobs", "Map the current playground controls into the child run settings."],
+            ["Preserve upstream", "Only change the selected node and downstream artifacts."],
+            ["Target this node", "Keep the repair targeted to the selected node unless downstream rebuilding is required."],
+          ],
+        },
+        master_agent: {
+          title: "Pipeline Start",
+          quick: [
+            ["Rebuild all", "Start the shared pipeline again while preserving genre and source prompt."],
+            ["Keep duration", "Keep the current duration and avoid changing unrelated generation settings."],
+            ["Strict source", "Keep the original prompt as the source of truth for the run."],
+          ],
+        },
+        topic_discovery_agent: {
+          title: "Topic Discovery",
+          quick: [
+            ["New angle", "Find a fresher, more specific angle for the same source topic."],
+            ["Keep subject", "Do not drift away from the named subject in the original prompt."],
+            ["More grounded", "Prefer concrete, grounded topic angles over generic ones."],
+          ],
+        },
+        research_agent: {
+          title: "Research",
+          quick: [
+            ["Refresh facts", "Refresh the research brief and use stronger concrete facts."],
+            ["More sources", "Prefer better source snippets and more specific supporting details."],
+            ["Tighter brief", "Keep the brief concise and directly usable by the script."],
+          ],
+        },
+        script_agent: {
+          title: "Script",
+          quick: [
+            ["Fresh hook", "Regenerate with a stronger first sentence and faster setup."],
+            ["Simple words", "Use simpler words, clearer sentence flow, and less generic narration."],
+            ["Stronger ending", "Improve the final reveal or closing point while preserving the topic."],
+            ["Keep subject", "Keep the named subject and do not copy unrelated few-shot examples."],
+          ],
+        },
+        validation_agent: {
+          title: "Validation",
+          quick: [
+            ["Strict check", "Run stricter validation and repair anything off-topic, copied, or weak."],
+            ["Preserve passed", "Preserve artifacts that already passed validation."],
+            ["Repair loop", "Send focused repair notes back to the owning agent if validation fails."],
+          ],
+        },
+        audio_agent: {
+          title: "Audio",
+          controls: [
+            { kind: "range", key: "voice_speed", label: "Voice speed", min: 0.65, max: 1.4, step: 0.01, format: "multiplier" },
+          ],
+          quick: [
+            ["Slower", "voice_speed", 0.88],
+            ["Normal", "voice_speed", 1.0],
+            ["Faster", "voice_speed", 1.12],
+          ],
+        },
+        caption_agent: {
+          title: "Captions",
+          controls: [
+            { kind: "range", key: "caption_words", label: "Words per caption", min: 1, max: 8, step: 1, format: "integer" },
+          ],
+          quick: [
+            ["Tighter", "caption_words", 2],
+            ["Balanced", "caption_words", 4],
+            ["Longer", "caption_words", 6],
+          ],
+        },
+        timed_visual_agent: {
+          title: "Visual Timing",
+          controls: [
+            { kind: "range", key: "min_visual_segment_ms", label: "Min segment", min: 1200, max: 8000, step: 100, format: "milliseconds" },
+          ],
+          quick: [
+            ["More cuts", "min_visual_segment_ms", 1800],
+            ["Balanced", "min_visual_segment_ms", 3500],
+            ["Slower cuts", "min_visual_segment_ms", 5200],
+          ],
+        },
+        asset_agent: {
+          title: "Assets",
+          controls: [
+            { kind: "range", key: "image_count", label: "Visual variety", min: 1, max: 24, step: 1, format: "integer" },
+          ],
+          quick: [
+            ["Replace weak", "Replace weak or repeated visuals and search closer to the narration subject."],
+            ["Prefer video", "Prefer stock video where it fits the timed visual cue."],
+            ["Avoid repeats", "Avoid reusing selected URLs, filenames, or visually similar assets."],
+          ],
+        },
+        music_agent: {
+          title: "Music & SFX",
+          controls: [
+            { kind: "range", key: "music_volume", label: "Music volume", min: 0, max: 0.8, step: 0.01, format: "percent" },
+          ],
+          quick: [
+            ["Subtle", "Keep uploaded music quiet under narration."],
+            ["More present", "Raise uploaded music slightly while keeping narration clear."],
+            ["Use SFX", "Keep resolved sound effects placed near their trigger words."],
+          ],
+        },
+        render_agent: {
+          title: "Render",
+          controls: [
+            { kind: "toggle", key: "visual_motion", label: "Animate still images" },
+            { kind: "choice", key: "transition_style", label: "Transition", options: [["slide", "Slide"], ["fade", "Fade"], ["wipe", "Wipe"], ["cut", "Cut"]] },
+            { kind: "range", key: "transition_seconds", label: "Transition speed", min: 0, max: 1.2, step: 0.05, format: "seconds" },
+            { kind: "choice", key: "zoom_variant", label: "Zoom variant", options: [["mixed", "Mixed"], ["center_in", "Center in"], ["center_out", "Center out"], ["still", "Still"]] },
+          ],
+          quick: [
+            ["PowerPoint", "transition_style", "slide"],
+            ["Soft fade", "transition_style", "fade"],
+            ["No motion", "zoom_variant", "still"],
+          ],
+        },
+        thumbnail_agent: {
+          title: "Thumbnail",
+          quick: [
+            ["New cover", "Regenerate the cover images from the strongest available visual."],
+            ["Bolder text", "Use shorter, stronger thumbnail text."],
+            ["Use first visual", "Prefer the first selected visual as the thumbnail source."],
+          ],
+        },
+        final_output: {
+          title: "Final Output",
+          quick: [
+            ["Refresh metadata", "Refresh final output metadata and artifact collection."],
+            ["Keep files", "Keep existing media files and only recollect final artifacts."],
+          ],
+        },
       };
 
       const els = {
         genre: document.getElementById("genre"),
         provider: document.getElementById("provider"),
         apiKey: document.getElementById("apiKey"),
+        musicFile: document.getElementById("musicFile"),
+        musicStatus: document.getElementById("musicStatus"),
         notes: document.getElementById("notes"),
         newChat: document.getElementById("newChat"),
         runs: document.getElementById("runs"),
@@ -887,13 +1294,65 @@
         modalClose: document.getElementById("modalClose"),
       };
 
+      if (els.musicFile) els.musicFile.addEventListener("change", uploadSelectedMusic);
+
       boot();
 
       async function boot() {
         await Promise.all([loadGenres(), loadProviders(), loadRuns()]);
+        updateMusicStatus();
         renderThread();
         renderGraph();
         renderInspector();
+      }
+
+      async function uploadSelectedMusic() {
+        const file = els.musicFile && els.musicFile.files ? els.musicFile.files[0] : null;
+        if (!file) {
+          state.musicUpload = null;
+          state.musicPathOverride = null;
+          updateMusicStatus();
+          renderInspector();
+          return;
+        }
+        if (file.size > MAX_MUSIC_UPLOAD_BYTES) {
+          state.musicUpload = null;
+          state.musicPathOverride = "";
+          state.controlSettings = { ...state.controlSettings, music_path: "" };
+          if (els.musicFile) els.musicFile.value = "";
+          updateMusicStatus(`Upload failed: music file is ${formatFileSize(file.size)}. Keep it under ${formatFileSize(MAX_MUSIC_UPLOAD_BYTES)}.`, true);
+          renderInspector();
+          return;
+        }
+        updateMusicStatus("Uploading...");
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          const response = await fetch(`${API}/music`, {
+            method: "POST",
+            body: form,
+          });
+          if (!response.ok) {
+            let message = response.statusText;
+            try {
+              const data = await response.json();
+              message = data.detail || message;
+            } catch (_error) {}
+            throw new Error(message);
+          }
+          const data = await response.json();
+          state.musicUpload = data;
+          state.musicPathOverride = data.music_path || "";
+          state.controlSettings = { ...state.controlSettings, music_path: state.musicPathOverride };
+          updateMusicStatus();
+          renderInspector();
+        } catch (error) {
+          state.musicUpload = null;
+          state.musicPathOverride = "";
+          state.controlSettings = { ...state.controlSettings, music_path: "" };
+          updateMusicStatus(`Upload failed: ${error && error.message ? error.message : "Unknown error"}`, true);
+          renderInspector();
+        }
       }
 
       async function loadGenres() {
@@ -941,6 +1400,9 @@
               notes: els.notes.value || "",
               llm_provider: els.provider.value || "env",
               llm_api_key: els.apiKey.value || "",
+              music_path: selectedMusicPath(),
+              parent_run_id: state.currentRun ? state.currentRun.id : "",
+              chat_history: compactChatHistory(),
             }),
           });
           els.message.value = "";
@@ -964,11 +1426,17 @@
         state.currentRun = null;
         state.selectedStageId = "";
         state.selectedStage = null;
+        state.controlSettings = { ...DEFAULT_SETTINGS };
+        state.stageInstructions = {};
+        state.musicUpload = null;
+        state.musicPathOverride = null;
         state.messages = [];
         els.message.value = "";
+        if (els.musicFile) els.musicFile.value = "";
         els.activeMeta.textContent = "New chat";
         els.activeStatus.textContent = "idle";
         els.activeStatus.className = "pill status";
+        updateMusicStatus();
         renderThread();
         renderGraph();
         renderInspector();
@@ -1006,7 +1474,20 @@
       }
 
       function setCurrentRun(run) {
+        const previousRunId = state.currentRun && state.currentRun.id;
+        if (previousRunId !== run.id) {
+          state.musicUpload = null;
+          state.musicPathOverride = null;
+          if (els.musicFile) els.musicFile.value = "";
+        }
         state.currentRun = run;
+        const runSettings = {
+          ...((run && run.settings && typeof run.settings === "object") ? run.settings : {}),
+          ...((run && run.settings_patch && typeof run.settings_patch === "object") ? run.settings_patch : {}),
+        };
+        state.controlSettings = previousRunId === run.id
+          ? { ...DEFAULT_SETTINGS, ...runSettings, ...state.controlSettings }
+          : { ...DEFAULT_SETTINGS, ...runSettings };
         const stageIds = Array.isArray(run.stages) ? run.stages.map((stage) => stage.id) : [];
         if ((!state.selectedStageId || !stageIds.includes(state.selectedStageId)) && run.stages && run.stages.length) {
           state.selectedStageId = run.stages[0].id;
@@ -1025,6 +1506,7 @@
         els.activeMeta.textContent = run.route_summary || run.user_message || "Current run";
         els.activeStatus.textContent = run.status || "idle";
         els.activeStatus.className = `pill status ${run.status || ""}`;
+        updateMusicStatus();
         renderThread();
         renderGraph();
         loadSelectedStage().then(() => renderInspector());
@@ -1050,19 +1532,25 @@
         const run = state.currentRun;
         const stages = run && Array.isArray(run.stages) ? run.stages : [];
         els.graph.innerHTML = stages.map((stage, index) => (
-          `<button class="stage ${escapeHtml(stage.status)} ${stage.id === state.selectedStageId ? "selected" : ""}" data-stage="${escapeHtml(stage.id)}">
-            <div class="node-index">${index + 1}</div>
-            <div class="node-body">
-              <strong>${escapeHtml(label(stage.agent_name || stage.id))}</strong>
-              <small>${escapeHtml(stage.execution_mode || "")} · ${escapeHtml(stage.status || "queued")}</small>
-              <div class="node-badges">
-                ${stage.input_json && Object.keys(stage.input_json).length ? "<em>input</em>" : ""}
-                ${stage.output_json && Object.keys(stage.output_json).length ? "<em>output</em>" : ""}
-                ${stage.artifacts && stage.artifacts.length ? `<em>${stage.artifacts.length} files</em>` : ""}
+          `<article class="stage ${escapeHtml(stage.status)} ${stage.id === state.selectedStageId ? "selected" : ""}">
+            <button class="stage-select" type="button" data-stage="${escapeHtml(stage.id)}">
+              <div class="node-index">${index + 1}</div>
+              <div class="node-body">
+                <strong>${escapeHtml(label(stage.agent_name || stage.id))}</strong>
+                <small>${escapeHtml(stage.execution_mode || "")} · ${escapeHtml(stage.status || "queued")}</small>
+                <div class="node-badges">
+                  ${stage.input_json && Object.keys(stage.input_json).length ? "<em>input</em>" : ""}
+                  ${stage.output_json && Object.keys(stage.output_json).length ? "<em>output</em>" : ""}
+                  ${stage.artifacts && stage.artifacts.length ? `<em>${stage.artifacts.length} files</em>` : ""}
+                  ${loopTargets(stage).map((target) => `<em class="loop-badge">Loop -> ${escapeHtml(label(target))}</em>`).join("")}
+                </div>
+                <span>${escapeHtml(stage.events && stage.events.length ? stage.events[stage.events.length - 1].message : stage.prompt_text || "")}</span>
               </div>
-              <span>${escapeHtml(stage.events && stage.events.length ? stage.events[stage.events.length - 1].message : stage.prompt_text || "")}</span>
-            </div>
-          </button>`
+            </button>
+            <button class="node-rerun ${state.rerunningStageId === stage.id ? "is-busy" : ""}" type="button" data-rerun-stage="${escapeHtml(stage.id)}" title="Rerun node" aria-label="Rerun ${escapeHtml(label(stage.agent_name || stage.id))}" ${state.rerunningStageId ? "disabled" : ""}>
+              ${repeatIcon()}
+            </button>
+          </article>`
         )).join("") || `<div class="stage"><strong>No run</strong><small>Submit a message</small></div>`;
         els.graph.querySelectorAll("[data-stage]").forEach((button) => {
           button.addEventListener("click", async () => {
@@ -1070,9 +1558,25 @@
             await loadSelectedStage();
             renderGraph();
             renderInspector();
-            openStageModal();
           });
         });
+        els.graph.querySelectorAll("[data-rerun-stage]").forEach((button) => {
+          button.addEventListener("click", () => rerunStage(button.dataset.rerunStage, payloadForStageId(button.dataset.rerunStage)));
+        });
+      }
+
+      function loopTargets(stage) {
+        const events = Array.isArray(stage && stage.events) ? stage.events : [];
+        const targets = [];
+        events.forEach((event) => {
+          const payload = event && event.payload_json ? event.payload_json : {};
+          const target = payload.loop_back_to || "";
+          const message = String(event && event.message || "").toLowerCase();
+          if (target && message.includes("feedback") && !targets.includes(target)) {
+            targets.push(target);
+          }
+        });
+        return targets;
       }
 
       async function loadSelectedStage() {
@@ -1089,30 +1593,515 @@
         }
       }
 
+      async function rerunStage(stageId, options = {}) {
+        if (!state.currentRun || !stageId || state.rerunningStageId) return;
+        state.rerunningStageId = stageId;
+        renderGraph();
+        renderInspector();
+        try {
+          const run = await api(`/runs/${encodeURIComponent(state.currentRun.id)}/stages/${encodeURIComponent(stageId)}/rerun`, {
+            method: "POST",
+            body: JSON.stringify(options || {}),
+          });
+          state.selectedStageId = stageId;
+          state.messages.push({ role: "assistant", content: `Rerunning ${label(stageId)} as a targeted child run.`, pending: !terminal.has(run.status) });
+          setCurrentRun(run);
+          await loadSelectedStage();
+          await loadRuns();
+          startPolling(run.id);
+        } catch (error) {
+          state.messages.push({ role: "assistant", content: friendlyError(error) });
+          renderThread();
+        } finally {
+          state.rerunningStageId = "";
+          renderGraph();
+          renderInspector();
+        }
+      }
+
       function renderInspector() {
         const run = state.currentRun;
         const stage = state.selectedStage || (run && Array.isArray(run.stages)
           ? run.stages.find((item) => item.id === state.selectedStageId) || run.stages[0]
           : null);
         if (!stage) {
-          els.stageTitle.textContent = "Agent Details";
+          els.stageTitle.textContent = "Node Controls";
           els.stageMeta.textContent = "No stage selected";
-          els.inspector.innerHTML = `<div class="section"><pre>No agent details yet.</pre></div>`;
+          els.inspector.innerHTML = `<div class="control-card"><p>Select a node to test its available options.</p></div>`;
           return;
         }
         els.stageTitle.textContent = label(stage.agent_name || stage.id);
         els.stageMeta.textContent = `${stage.status || "queued"} · ${stage.execution_mode || ""}`;
-        els.inspector.innerHTML = [
-          artifactsSection(stage.artifacts || []),
-          detailSection("Input", pretty(stage.input_json)),
-          detailSection("Output", pretty(stage.output_json)),
-          eventsSection(stage.events || []),
-          detailSection("Prompt / Message Base", stage.prompt_text || "", false),
-          stage.error_text ? detailSection("Error", stage.error_text) : "",
-          `<button class="ghost" id="openStageModal" type="button">Open Full Details</button>`,
-        ].join("");
+        els.inspector.innerHTML = stageControlPanel(stage);
         const openButton = document.getElementById("openStageModal");
         if (openButton) openButton.addEventListener("click", openStageModal);
+        const rerunButton = document.getElementById("rerunStage");
+        if (rerunButton) rerunButton.addEventListener("click", () => rerunStage(stage.id, payloadFromControls(stage)));
+        const plainRerunButton = document.getElementById("plainRerunStage");
+        if (plainRerunButton) plainRerunButton.addEventListener("click", () => rerunStage(stage.id));
+        bindControlPanel(stage);
+      }
+
+      function stageControlPanel(stage) {
+        const settings = currentSettings();
+        const latestEvent = stage.events && stage.events.length ? stage.events[stage.events.length - 1].message : "";
+        return `<div class="control-panel" data-stage-controls="${escapeHtml(stage.id)}">
+          <div class="control-card">
+            <h3>${escapeHtml(label(stage.agent_name || stage.id))}</h3>
+            <p>${escapeHtml(latestEvent || stage.prompt_text || "Ready for a targeted rerun.")}</p>
+            ${settingsPreview(settings)}
+          </div>
+          ${controlsForStage(stage, settings)}
+          <div class="control-card">
+            <h3>Agent Note</h3>
+            <textarea class="instruction-box" rows="3" data-agent-instruction placeholder="Optional instruction for this node">${escapeHtml(stageInstruction(stage.id))}</textarea>
+            ${instructionButtons(stage.id)}
+          </div>
+          ${stage.error_text ? `<div class="control-card"><h3>Error</h3><p>${escapeHtml(stage.error_text)}</p></div>` : ""}
+          <div class="control-actions">
+            <button class="apply-rerun ${state.rerunningStageId === stage.id ? "is-busy" : ""}" id="rerunStage" type="button" ${state.rerunningStageId ? "disabled" : ""}>${repeatIcon()} ${state.rerunningStageId === stage.id ? "Rerunning" : "Apply & rerun from this node"}</button>
+            <button class="ghost" id="plainRerunStage" type="button" ${state.rerunningStageId ? "disabled" : ""}>Rerun without changes</button>
+            <button class="ghost" id="openStageModal" type="button">Open Full Details</button>
+          </div>
+        </div>`;
+      }
+
+      function controlsForStage(stage, settings) {
+        const id = stage.id || "";
+        if (id === "render_agent") return renderControls(settings);
+        if (id === "audio_agent") return audioControls(settings);
+        if (id === "caption_agent") return captionControls(settings);
+        if (id === "asset_agent") return assetControls(settings);
+        if (id === "timed_visual_agent") return visualTimingControls(settings);
+        if (id === "music_agent") return musicControls(settings);
+        if (id === "parameter_agent") return parameterControls(settings);
+        if (id === "script_agent") return scriptControls();
+        if (id === "topic_discovery_agent" || id === "research_agent") return researchControls(id);
+        if (id === "thumbnail_agent") return thumbnailControls();
+        if (id === "final_output") return finalOutputControls();
+        return genericControls(id);
+      }
+
+      function renderControls(settings) {
+        return `<div class="control-card">
+          <h3>Render</h3>
+          <div class="control-grid">
+            <label class="toggle-field">
+              <input data-setting="visual_motion" type="checkbox" ${settings.visual_motion ? "checked" : ""} />
+              <span>Animate stills</span>
+            </label>
+            ${selectSetting("zoom_variant", "Zoom variant", [
+              ["mixed", "Mixed center"],
+              ["center_in", "Center zoom in"],
+              ["center_out", "Center zoom out"],
+              ["still", "Still"],
+            ], settings.zoom_variant)}
+            ${selectSetting("transition_style", "Transition", [
+              ["slide", "Slide"],
+              ["fade", "Fade"],
+              ["wipe", "Wipe"],
+              ["cut", "Cut"],
+            ], settings.transition_style)}
+            ${numberSetting("transition_seconds", "Transition seconds", settings.transition_seconds, "0", "1.2", "0.05")}
+          </div>
+          ${presetRow("transition_style", settings.transition_style, [["slide", "Slide"], ["fade", "Fade"], ["wipe", "Wipe"], ["cut", "Cut"]])}
+          ${presetRow("zoom_variant", settings.zoom_variant, [["mixed", "Mixed"], ["center_in", "Zoom in"], ["center_out", "Zoom out"], ["still", "Still"]])}
+        </div>`;
+      }
+
+      function musicControls(settings) {
+        const musicName = settings.music_path ? `Selected: ${musicFileName(settings.music_path)}` : "No music selected";
+        return `<div class="control-card">
+          <h3>Music & SFX</h3>
+          <p>${escapeHtml(musicName)}</p>
+          <div class="control-grid">
+            ${numberSetting("music_volume", "Music volume", settings.music_volume, "0", "0.8", "0.01")}
+          </div>
+          ${presetRow("music_volume", settings.music_volume, [["0.08", "Low"], ["0.12", "Normal"], ["0.2", "Higher"], ["0", "Mute"]])}
+        </div>`;
+      }
+
+      function audioControls(settings) {
+        return `<div class="control-card">
+          <h3>Audio</h3>
+          <div class="control-grid">
+            ${numberSetting("voice_speed", "Voice speed", settings.voice_speed, "0.65", "1.4", "0.01")}
+          </div>
+          ${presetRow("voice_speed", settings.voice_speed, [["0.82", "Slower"], ["1", "Normal"], ["1.12", "Faster"]])}
+        </div>`;
+      }
+
+      function captionControls(settings) {
+        return `<div class="control-card">
+          <h3>Captions</h3>
+          <div class="control-grid">
+            ${numberSetting("caption_words", "Words per caption", settings.caption_words, "1", "8", "1")}
+          </div>
+          ${presetRow("caption_words", settings.caption_words, [["2", "Tight"], ["3", "Short"], ["4", "Normal"], ["5", "Longer"]])}
+        </div>`;
+      }
+
+      function assetControls(settings) {
+        return `<div class="control-card">
+          <h3>Assets</h3>
+          <div class="control-grid">
+            ${numberSetting("image_count", "Visual variety", settings.image_count, "1", "24", "1")}
+          </div>
+          ${presetRow("image_count", settings.image_count, [["8", "Light"], ["10", "Normal"], ["14", "More"], ["18", "Heavy"]])}
+        </div>`;
+      }
+
+      function visualTimingControls(settings) {
+        return `<div class="control-card">
+          <h3>Visual Timing</h3>
+          <div class="control-grid">
+            ${numberSetting("image_count", "Target visual beats", settings.image_count, "1", "24", "1")}
+            ${numberSetting("min_visual_segment_ms", "Min segment ms", settings.min_visual_segment_ms, "1200", "8000", "100")}
+          </div>
+          ${presetRow("image_count", settings.image_count, [["8", "Balanced"], ["12", "Quicker"], ["16", "Dense"]])}
+          ${presetRow("min_visual_segment_ms", settings.min_visual_segment_ms, [["2500", "Fast"], ["3500", "Normal"], ["5000", "Slow"]])}
+        </div>`;
+      }
+
+      function parameterControls(settings) {
+        return `<div class="control-card">
+          <h3>Parameters</h3>
+          <div class="control-grid">
+            ${numberSetting("voice_speed", "Voice speed", settings.voice_speed, "0.65", "1.4", "0.01")}
+            ${numberSetting("caption_words", "Caption words", settings.caption_words, "1", "8", "1")}
+            ${numberSetting("image_count", "Visual variety", settings.image_count, "1", "24", "1")}
+            ${numberSetting("music_volume", "Music volume", settings.music_volume, "0", "0.8", "0.01")}
+            ${numberSetting("min_visual_segment_ms", "Min visual ms", settings.min_visual_segment_ms, "1200", "8000", "100")}
+          </div>
+        </div>`;
+      }
+
+      function scriptControls() {
+        return `<div class="control-card"><h3>Script</h3>${instructionPresetRow([
+          "Use a stronger first-line hook and keep the original subject.",
+          "Make the story simpler, clearer, and less random.",
+          "Add more suspense while preserving factual alignment.",
+        ])}</div>`;
+      }
+
+      function researchControls(stageId) {
+        const items = stageId === "topic_discovery_agent"
+          ? ["Find a more specific angle for the same source prompt.", "Avoid broad generic topics.", "Prefer a stronger curiosity gap."]
+          : ["Use more concrete details from sources.", "Keep only facts that support the narration.", "Remove weak or generic research beats."];
+        return `<div class="control-card"><h3>${escapeHtml(label(stageId))}</h3>${instructionPresetRow(items)}</div>`;
+      }
+
+      function thumbnailControls() {
+        return `<div class="control-card"><h3>Thumbnail</h3>${instructionPresetRow([
+          "Use the clearest final-frame subject.",
+          "Make the cover more readable at phone size.",
+          "Use higher contrast while keeping the same video topic.",
+        ])}</div>`;
+      }
+
+      function finalOutputControls() {
+        return `<div class="control-card"><h3>Final Output</h3><p>Collect final artifacts again from the selected child run.</p></div>`;
+      }
+
+      function genericControls(stageId) {
+        return `<div class="control-card"><h3>${escapeHtml(label(stageId))}</h3>${instructionPresetRow([
+          "Preserve the original topic and rerun this stage cleanly.",
+          "Keep upstream artifacts unchanged and rebuild downstream results.",
+        ])}</div>`;
+      }
+
+      function numberSetting(key, title, value, min, max, step) {
+        return `<label class="control-field">${escapeHtml(title)}
+          <span class="control-line"><small>${escapeHtml(min)} - ${escapeHtml(max)}</small><span class="control-value" data-setting-output="${escapeHtml(key)}">${escapeHtml(settingDisplayValue(key, value))}</span></span>
+          <input data-setting="${escapeHtml(key)}" type="range" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(value)}" />
+        </label>`;
+      }
+
+      function selectSetting(key, title, options, value) {
+        return `<label class="control-field">${escapeHtml(title)}
+          <select data-setting="${escapeHtml(key)}">
+            ${options.map(([optionValue, text]) => `<option value="${escapeHtml(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}
+          </select>
+        </label>`;
+      }
+
+      function presetRow(key, current, options) {
+        return `<div class="control-row" data-preset-row="${escapeHtml(key)}">
+          ${options.map(([value, text]) => `<button type="button" data-apply-setting="${escapeHtml(key)}" data-apply-value="${escapeHtml(value)}" class="${String(current) === String(value) ? "active" : ""}">${escapeHtml(text)}</button>`).join("")}
+        </div>`;
+      }
+
+      function instructionPresetRow(items) {
+        return `<div class="control-row">${items.map((item) => `<button type="button" data-add-instruction="${escapeHtml(item)}">${escapeHtml(shortInstruction(item))}</button>`).join("")}</div>`;
+      }
+
+      function instructionButtons(stageId) {
+        const items = {
+          render_agent: [
+            "Keep the image motion smooth and centered.",
+            "Avoid abrupt visual jumps between assets.",
+          ],
+          asset_agent: [
+            "Avoid repeated or weak visual assets.",
+            "Prefer visuals that match the named subject exactly.",
+          ],
+          caption_agent: [
+            "Prioritize readable captions with safe margins.",
+            "Keep phrases short and easy to scan.",
+          ],
+          audio_agent: [
+            "Keep narration natural and not rushed.",
+            "Preserve word timings for caption sync.",
+          ],
+          music_agent: [
+            "Mix the selected music quietly under narration.",
+            "Keep resolved SFX near their trigger words.",
+          ],
+        }[stageId] || [];
+        return items.length ? instructionPresetRow(items) : "";
+      }
+
+      function defaultInstruction(stageId) {
+        if (stageId === "render_agent") return "Apply the selected render animation, transition, and zoom settings.";
+        if (stageId === "music_agent") return "Mix the selected uploaded music and resolved SFX under narration, or skip this node when no audio layers are selected.";
+        if (stageId === "asset_agent") return "Keep upstream script and timing, but rebuild visuals with the selected asset options.";
+        if (stageId === "audio_agent") return "Keep the same script and regenerate narration with the selected audio options.";
+        if (stageId === "caption_agent") return "Keep the same narration and rebuild captions with the selected caption options.";
+        return "";
+      }
+
+      function bindControlPanel(stage) {
+        els.inspector.querySelectorAll("[data-apply-setting]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const key = button.dataset.applySetting;
+            const value = button.dataset.applyValue;
+            const input = els.inspector.querySelector(`[data-setting="${cssEscape(key)}"]`);
+            if (!input) return;
+            if (input.type === "checkbox") {
+              input.checked = value === "true" || value === "on" || value === "1";
+            } else {
+              input.value = value;
+            }
+            updateControlSettingsFromDom();
+            updatePresetButtons();
+          });
+        });
+        els.inspector.querySelectorAll("[data-add-instruction]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const textarea = els.inspector.querySelector("[data-agent-instruction]");
+            if (!textarea) return;
+            const text = button.dataset.addInstruction || "";
+            textarea.value = textarea.value.trim() ? `${textarea.value.trim()}\n${text}` : text;
+            state.stageInstructions[stage.id] = textarea.value.trim();
+          });
+        });
+        els.inspector.querySelectorAll("[data-setting]").forEach((input) => {
+          input.addEventListener("input", () => {
+            updateControlSettingsFromDom();
+            updatePresetButtons();
+          });
+          input.addEventListener("change", () => {
+            updateControlSettingsFromDom();
+            updatePresetButtons();
+          });
+        });
+        const note = els.inspector.querySelector("[data-agent-instruction]");
+        if (note) {
+          note.addEventListener("input", () => {
+            state.stageInstructions[stage.id] = note.value.trim();
+          });
+        }
+      }
+
+      function updateControlSettingsFromDom() {
+        const patch = {};
+        els.inspector.querySelectorAll("[data-setting]").forEach((input) => {
+          const key = input.dataset.setting;
+          if (!key) return;
+          if (input.type === "checkbox") patch[key] = input.checked;
+          else if (input.type === "number" || input.type === "range") patch[key] = Number(input.value);
+          else patch[key] = input.value;
+        });
+        state.controlSettings = { ...state.controlSettings, ...patch };
+      }
+
+      function updatePresetButtons() {
+        els.inspector.querySelectorAll("[data-setting]").forEach((input) => {
+          const key = input.dataset.setting;
+          const output = els.inspector.querySelector(`[data-setting-output="${cssEscape(key)}"]`);
+          if (output) output.textContent = settingDisplayValue(key, input.type === "checkbox" ? input.checked : input.value);
+        });
+        els.inspector.querySelectorAll("[data-preset-row]").forEach((row) => {
+          const key = row.dataset.presetRow;
+          const input = els.inspector.querySelector(`[data-setting="${cssEscape(key)}"]`);
+          const value = input && input.type === "checkbox" ? String(input.checked) : String(input && input.value);
+          const output = els.inspector.querySelector(`[data-setting-output="${cssEscape(key)}"]`);
+          if (output && input) output.textContent = settingDisplayValue(key, input.type === "checkbox" ? input.checked : input.value);
+          row.querySelectorAll("[data-apply-setting]").forEach((button) => {
+            button.classList.toggle("active", String(button.dataset.applyValue) === value);
+          });
+        });
+      }
+
+      function payloadFromControls(stage) {
+        updateControlSettingsFromDom();
+        const settings = currentSettings();
+        const note = els.inspector.querySelector("[data-agent-instruction]");
+        const instruction = note && note.value ? note.value.trim() : "";
+        const instructions = {};
+        if (instruction) instructions[targetAgentForStage(stage.id)] = instruction;
+        return {
+          message: `Playground controls rerun: ${label(stage.agent_name || stage.id)}`,
+          settings_patch: settings,
+          music_path: selectedMusicPath(),
+          forced_agent_instructions: instructions,
+        };
+      }
+
+      function payloadForStageId(stageId) {
+        const instruction = String(state.stageInstructions && state.stageInstructions[stageId] || "").trim();
+        const instructions = {};
+        if (instruction) instructions[targetAgentForStage(stageId)] = instruction;
+        return {
+          message: `Playground controls rerun: ${label(stageId)}`,
+          settings_patch: currentSettings(),
+          music_path: selectedMusicPath(),
+          forced_agent_instructions: instructions,
+        };
+      }
+
+      function targetAgentForStage(stageId) {
+        if ([
+          "topic_discovery_agent",
+          "research_agent",
+          "script_agent",
+          "audio_agent",
+          "caption_agent",
+          "timed_visual_agent",
+          "asset_agent",
+          "music_agent",
+          "render_agent",
+          "thumbnail_agent",
+          "validation_agent",
+        ].includes(stageId)) return stageId;
+        return "master_agent";
+      }
+
+      function currentSettings() {
+        const run = state.currentRun || {};
+        const settings = {
+          voice_speed: 1,
+          caption_words: 4,
+          image_count: 8,
+          music_volume: 0.12,
+          music_path: "",
+          visual_motion: true,
+          transition_style: "slide",
+          transition_seconds: 0.45,
+          zoom_variant: "mixed",
+          min_visual_segment_ms: 3500,
+        };
+        Object.assign(settings, run.settings || {});
+        Object.assign(settings, run.settings_patch || {});
+        const master = Array.isArray(run.stages) ? run.stages.find((stage) => stage.id === "master_agent") : null;
+        if (master && master.output_json && master.output_json.settings) Object.assign(settings, master.output_json.settings);
+        if (master && master.output_json && master.output_json.settings_patch) Object.assign(settings, master.output_json.settings_patch);
+        Object.assign(settings, state.controlSettings || {});
+        settings.visual_motion = settings.visual_motion !== false && settings.visual_motion !== "false" && settings.visual_motion !== "off";
+        settings.voice_speed = cleanNumber(settings.voice_speed, 1);
+        settings.caption_words = cleanNumber(settings.caption_words, 4);
+        settings.image_count = cleanNumber(settings.image_count, 8);
+        settings.music_volume = cleanNumber(settings.music_volume, 0.12);
+        settings.transition_seconds = cleanNumber(settings.transition_seconds, 0.45);
+        settings.min_visual_segment_ms = cleanNumber(settings.min_visual_segment_ms, 3500);
+        settings.music_path = selectedMusicPath();
+        settings.transition_style = ["slide", "fade", "wipe", "cut"].includes(settings.transition_style) ? settings.transition_style : "slide";
+        settings.zoom_variant = ["mixed", "center_in", "center_out", "still"].includes(settings.zoom_variant) ? settings.zoom_variant : "mixed";
+        return settings;
+      }
+
+      function settingsPreview(settings) {
+        const bits = [
+          `voice ${settings.voice_speed}`,
+          `${settings.caption_words} words`,
+          `${settings.image_count} visuals`,
+          `music ${settings.music_volume}`,
+          settings.music_path ? `track ${musicFileName(settings.music_path)}` : "no music",
+          settings.visual_motion ? "motion on" : "motion off",
+          `${settings.transition_style} ${settings.transition_seconds}s`,
+          settings.zoom_variant.replaceAll("_", " "),
+          `${settings.min_visual_segment_ms}ms beats`,
+        ];
+        return `<div class="settings-preview">${bits.map((bit) => `<span>${escapeHtml(bit)}</span>`).join("")}</div>`;
+      }
+
+      function selectedMusicPath() {
+        if (state.musicPathOverride !== null && state.musicPathOverride !== undefined) {
+          return String(state.musicPathOverride || "").trim();
+        }
+        const uploadPath = state.musicUpload && state.musicUpload.music_path;
+        if (uploadPath) return String(uploadPath).trim();
+        const controlPath = state.controlSettings && state.controlSettings.music_path;
+        if (controlPath) return String(controlPath).trim();
+        const run = state.currentRun || {};
+        return String(
+          run.music_path
+          || (run.settings && run.settings.music_path)
+          || (run.settings_patch && run.settings_patch.music_path)
+          || ""
+        ).trim();
+      }
+
+      function updateMusicStatus(message = "", isError = false) {
+        if (!els.musicStatus) return;
+        const musicPath = selectedMusicPath();
+        els.musicStatus.textContent = message || (musicPath ? `Selected: ${musicFileName(musicPath)}` : "No music selected");
+        els.musicStatus.classList.toggle("error", Boolean(isError));
+        els.musicStatus.classList.toggle("selected", Boolean(musicPath) && !isError && !message);
+      }
+
+      function musicFileName(path) {
+        const value = String(path || "").replaceAll("\\", "/");
+        return value.split("/").filter(Boolean).pop() || "music";
+      }
+
+      function formatFileSize(bytes) {
+        const value = Number(bytes) || 0;
+        if (value < 1024) return `${value} B`;
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+        return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+      }
+
+      function shortInstruction(text) {
+        const clean = String(text || "").replace(/\.$/, "");
+        return clean.length > 30 ? `${clean.slice(0, 27).trim()}...` : clean;
+      }
+
+      function cleanNumber(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
+      }
+
+      function settingDisplayValue(key, value) {
+        const number = Number(value);
+        if (key === "voice_speed") return `${cleanNumber(value, 1).toFixed(2)}x`;
+        if (key === "music_volume") return `${Math.round(cleanNumber(value, 0) * 100)}%`;
+        if (key === "transition_seconds") return `${cleanNumber(value, 0).toFixed(2)}s`;
+        if (key === "min_visual_segment_ms") return `${Math.round(cleanNumber(value, 0))}ms`;
+        if (Number.isFinite(number)) return String(Math.round(number * 100) / 100);
+        return String(value ?? "");
+      }
+
+      function stageInstruction(stageId) {
+        if (state.stageInstructions && Object.prototype.hasOwnProperty.call(state.stageInstructions, stageId)) {
+          return state.stageInstructions[stageId];
+        }
+        return defaultInstruction(stageId);
+      }
+
+      function cssEscape(value) {
+        if (window.CSS && window.CSS.escape) return window.CSS.escape(value);
+        return String(value || "").replace(/"/g, '\\"');
       }
 
       function openStageModal(tab = state.modalTab || "artifacts") {
@@ -1214,6 +2203,10 @@
         return `<div class="artifact-grid">${body}</div>`;
       }
 
+      function repeatIcon() {
+        return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h8V3l-3.3 3.3Z"></path></svg>`;
+      }
+
       async function api(path, options = {}) {
         const response = await fetch(`${API}${path}`, {
           headers: { "Content-Type": "application/json" },
@@ -1228,6 +2221,16 @@
           throw new Error(message);
         }
         return response.json();
+      }
+
+      function compactChatHistory() {
+        return state.messages
+          .filter((message) => !message.pending)
+          .slice(-12)
+          .map((message) => ({
+            role: message.role,
+            content: String(message.content || "").slice(0, 500),
+          }));
       }
 
       function summaryForRun(run) {
@@ -1249,8 +2252,14 @@
         if (active && active.id === "script_agent") {
           return "I am writing and validating the script now. I am keeping it aligned with your prompt and the selected genre.";
         }
+        if (active && active.id === "validation_agent") {
+          return "I am checking the latest agent output now. If it fails, I will send the validator notes back to the responsible agent and show the loop in the graph.";
+        }
         if (active && active.id === "audio_agent") {
           return "I am generating the narration audio and timing data now, so captions and visuals can stay in sync.";
+        }
+        if (active && active.id === "music_agent") {
+          return "I am preparing the music and SFX layer now. If no audio layers are selected, I will keep the clean narration audio and move on.";
         }
         if (active && active.id === "render_agent") {
           return "I am rendering the final video now. This can take a little while because audio, captions, visuals, and timing are being assembled together.";

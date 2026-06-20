@@ -20,6 +20,7 @@ class ScriptAgent(BaseAgent):
         reference_scripts: list[dict[str, Any]],
         user_notes: str = "",
         growth_context=None,
+        previous_failures: list[str] | None = None,
     ) -> ScriptOutput:
         payload = {
             "topic": topic,
@@ -27,13 +28,14 @@ class ScriptAgent(BaseAgent):
             "duration": duration,
             "reference_count": len(reference_scripts),
             "user_notes": user_notes,
+            "previous_failures": previous_failures or [],
             "has_growth_context": bool(growth_context),
             "max_input_chars": 6000,
             "max_output_tokens": 4096,
         }
         self.log_input(payload)
         self.event("Generating script", provider=getattr(provider, "name", "unknown"))
-        output = generate_script(provider, topic, genre, duration, reference_scripts, user_notes, growth_context)
+        output = generate_script(provider, topic, genre, duration, reference_scripts, user_notes, growth_context, previous_failures=previous_failures)
         self.event("Script generated", word_count=output.word_count, provider=output.provider)
         self.log_output(output)
         return output

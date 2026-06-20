@@ -271,6 +271,8 @@ def _generic_visual_query(words: list[str], genre: GenreConfig) -> str:
         return f"person conversation {joined}".strip()
     if genre.genre_id == "history_facts":
         return f"historic city street {joined}".strip()
+    if genre.genre_id == "comics":
+        return f"comic hero city {joined}".strip()
     return joined
 
 

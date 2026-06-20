@@ -14,16 +14,19 @@ import threading
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
+try:
+    from app.core.config import get_settings
+except ModuleNotFoundError:
+    from backend.app.core.config import get_settings
 
 
 router = APIRouter(prefix="/playground", tags=["playground"])
 
-RUN_SCHEMA_VERSION = 4
+RUN_SCHEMA_VERSION = 7
 TERMINAL_STATUSES = {"succeeded", "failed", "skipped"}
 VALID_STAGE_STATUSES = {"queued", "running", "succeeded", "failed", "skipped"}
 _RUN_LOCK = threading.RLock()
@@ -38,6 +41,19 @@ class PlaygroundRunCreate(BaseModel):
     llm_provider: str = "env"
     llm_model: str = ""
     llm_api_key: str = ""
+    parent_run_id: str = ""
+    music_path: str = ""
+    chat_history: list[dict[str, Any]] = Field(default_factory=list)
+    rerun_stage_id: str = ""
+    forced_agent_instructions: dict[str, str] = Field(default_factory=dict)
+    settings_patch: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaygroundStageRerunRequest(BaseModel):
+    message: str = ""
+    music_path: str = ""
+    settings_patch: dict[str, Any] = Field(default_factory=dict)
+    forced_agent_instructions: dict[str, str] = Field(default_factory=dict)
 
 
 VISIBLE_STAGES: list[dict[str, str]] = [
@@ -84,6 +100,12 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "prompt_text": "Write a clear, grounded short script with simple words, alert beats, and a complete ending.",
     },
     {
+        "id": "validation_agent",
+        "agent_name": "validation_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Validate each pipeline artifact, then send repair notes back to the responsible agent when needed.",
+    },
+    {
         "id": "audio_agent",
         "agent_name": "audio_agent",
         "execution_mode": "hybrid",
@@ -108,10 +130,16 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "prompt_text": "Fetch videos and images for each timed visual cue, then select the best non-repeating asset.",
     },
     {
+        "id": "music_agent",
+        "agent_name": "music_agent",
+        "execution_mode": "deterministic",
+        "prompt_text": "Mix uploaded music and resolved SFX under clean narration, or skip when no audio layers are selected.",
+    },
+    {
         "id": "render_agent",
         "agent_name": "render_agent",
         "execution_mode": "deterministic",
-        "prompt_text": "Render a vertical MP4 from visuals, narration, captions, and optional music.",
+        "prompt_text": "Render a vertical MP4 from visuals, final audio, and captions.",
     },
     {
         "id": "thumbnail_agent",
@@ -135,25 +163,33 @@ PIPELINE_STAGE_TO_VISIBLE = {
     "topic_discovery_agent": "topic_discovery_agent",
     "research_agent": "research_agent",
     "script_agent": "script_agent",
-    "validate_script": "script_agent",
-    "validate_script_result": "script_agent",
+    "validate_script": "validation_agent",
+    "validate_script_result": "validation_agent",
+    "validation_agent": "validation_agent",
     "audio_agent": "audio_agent",
-    "validate_audio": "audio_agent",
-    "validate_audio_result": "audio_agent",
+    "validate_audio": "validation_agent",
+    "validate_audio_result": "validation_agent",
     "caption_agent": "caption_agent",
-    "validate_captions": "caption_agent",
-    "validate_captions_result": "caption_agent",
+    "validate_captions": "validation_agent",
+    "validate_captions_result": "validation_agent",
     "timed_visual_agent": "timed_visual_agent",
     "asset_agent": "asset_agent",
-    "validate_assets": "asset_agent",
-    "validate_assets_result": "asset_agent",
+    "validate_assets": "validation_agent",
+    "validate_assets_result": "validation_agent",
+    "music_agent": "music_agent",
     "render_agent": "render_agent",
-    "validate_render": "render_agent",
-    "validate_render_result": "render_agent",
+    "validate_render": "validation_agent",
+    "validate_render_result": "validation_agent",
     "thumbnail_agent": "thumbnail_agent",
 }
 
 STDOUT_STAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^\[validation\]", re.I), "validation_agent"),
+    (re.compile(r"^\[repair\].*script_agent", re.I), "script_agent"),
+    (re.compile(r"^\[repair\].*audio_agent", re.I), "audio_agent"),
+    (re.compile(r"^\[repair\].*caption_agent", re.I), "caption_agent"),
+    (re.compile(r"^\[repair\].*asset_agent", re.I), "asset_agent"),
+    (re.compile(r"^\[repair\].*render_agent", re.I), "render_agent"),
     (re.compile(r"Discovering grounded angle", re.I), "topic_discovery_agent"),
     (re.compile(r"Building research brief", re.I), "research_agent"),
     (re.compile(r"Generating script", re.I), "script_agent"),
@@ -161,9 +197,37 @@ STDOUT_STAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"Building captions", re.I), "caption_agent"),
     (re.compile(r"Building timed visual cues", re.I), "timed_visual_agent"),
     (re.compile(r"Fetching assets", re.I), "asset_agent"),
+    (re.compile(r"Preparing music/SFX mix|Preparing music mix", re.I), "music_agent"),
     (re.compile(r"Rendering video", re.I), "render_agent"),
     (re.compile(r"Generating thumbnails", re.I), "thumbnail_agent"),
 )
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+DEFAULT_PLAYGROUND_SETTINGS: dict[str, Any] = {
+    "voice_speed": 1.0,
+    "caption_words": 4,
+    "image_count": 8,
+    "music_volume": 0.12,
+    "min_visual_segment_ms": 3500,
+    "visual_motion": True,
+    "transition_style": "slide",
+    "transition_seconds": 0.45,
+    "zoom_variant": "mixed",
+    "music_path": "",
+}
+
+TRANSITION_STYLES = {"slide", "fade", "wipe", "cut"}
+ZOOM_VARIANTS = {"mixed", "center_in", "center_out", "still"}
+ALLOWED_MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+MAX_MUSIC_UPLOAD_MB = _positive_int_env("PLAYGROUND_MAX_MUSIC_UPLOAD_MB", 300)
+MAX_MUSIC_UPLOAD_BYTES = MAX_MUSIC_UPLOAD_MB * 1024 * 1024
 
 
 def _project_root() -> Path:
@@ -249,6 +313,8 @@ def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
         return _render_prompt_module("agents.prompts.script_prompts", fallback)
     if stage_id == "asset_agent":
         return _render_prompt_module("agents.prompts.asset_prompts", fallback)
+    if stage_id == "validation_agent":
+        return _render_prompt_module("agents.prompts.validation_prompts", fallback)
     if stage_id == "master_agent":
         master_prompt = _render_prompt_module("agents.prompts.master_prompts", "")
         desktop_prompt = _desktop_agent_prompt_text()
@@ -334,6 +400,42 @@ def list_llm_options() -> list[dict[str, Any]]:
     ]
 
 
+@router.post("/music")
+def upload_music(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = file.filename or "uploaded_music"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_MUSIC_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Upload an audio file: mp3, wav, m4a, aac, ogg, or flac.")
+
+    target_dir = _pipeline_data_dir() / "assets" / "music" / "uploads"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")[:60] or "music"
+    target = target_dir / f"{stem}-{uuid4().hex[:8]}{suffix}"
+
+    total = 0
+    with target.open("wb") as handle:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MUSIC_UPLOAD_BYTES:
+                handle.close()
+                target.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail=f"Music upload is too large. Keep it under {MAX_MUSIC_UPLOAD_MB} MB.")
+            handle.write(chunk)
+
+    if total <= 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded music file is empty.")
+
+    return {
+        "filename": target.name,
+        "music_path": str(target.resolve()),
+        "size_bytes": total,
+    }
+
+
 @router.get("/runs")
 def list_runs() -> list[dict[str, Any]]:
     _runs_dir().mkdir(parents=True, exist_ok=True)
@@ -377,6 +479,62 @@ def create_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     return _read_run(_run_path(run["id"]))
 
 
+@router.post("/runs/{run_id}/stages/{stage_id}/rerun")
+def rerun_stage(run_id: str, stage_id: str, request: PlaygroundStageRerunRequest | None = None) -> dict[str, Any]:
+    request = request or PlaygroundStageRerunRequest()
+    parent = get_run(run_id)
+    stage = _stage_by_id(parent, stage_id)
+    if str(parent.get("status") or "") not in TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="Wait for the current run to finish before rerunning a node.")
+
+    target_agent = _target_agent_for_rerun(stage_id)
+    stage_name = _display_stage_name(stage.get("agent_name") or stage_id)
+    source_prompt = _source_prompt_from_parent(parent) or str(parent.get("effective_message") or parent.get("user_message") or "")
+    message = request.message.strip() or f"Rerun the {stage_name} node for the existing video."
+    instruction = (
+        f"Rerun the {stage_name} stage for the existing video. Preserve the original topic, duration, genre, "
+        "and every unrelated stage decision unless this node requires a dependent artifact to be rebuilt."
+    )
+    option_instruction = _stage_option_instruction(stage_id, request.settings_patch, request.forced_agent_instructions)
+    if option_instruction:
+        instruction = f"{instruction} {option_instruction}"
+    forced_instructions = {target_agent: instruction}
+    forced_instructions.update(
+        {
+            str(agent): str(text)
+            for agent, text in (request.forced_agent_instructions or {}).items()
+            if str(agent).strip() and str(text).strip()
+        }
+    )
+    notes = "\n".join(
+        part
+        for part in (
+            str(parent.get("notes") or "").strip(),
+            f"NODE RERUN REQUEST: {instruction}",
+            f"Previous run id: {parent.get('id', run_id)}",
+            f"Previous stage status: {stage.get('status', '')}",
+        )
+        if part
+    )
+    payload = PlaygroundRunCreate(
+        message=message,
+        genre_id=str(parent.get("genre_id") or "scary_stories"),
+        duration=int(parent.get("duration") or 30),
+        notes=notes,
+        llm_provider=str(parent.get("llm_provider") or "env"),
+        llm_model=str(parent.get("llm_model") or ""),
+        parent_run_id=str(parent.get("id") or run_id),
+        music_path=_valid_music_path(request.music_path),
+        chat_history=list(parent.get("chat_history") or []),
+        rerun_stage_id=stage_id,
+        forced_agent_instructions=forced_instructions,
+        settings_patch=_clean_settings_patch(request.settings_patch),
+    )
+    if source_prompt:
+        payload = payload.model_copy(update={"message": f"{message} Keep the original topic: {source_prompt}"})
+    return create_run(payload)
+
+
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
     db_run = _read_run_from_db(run_id)
@@ -415,13 +573,428 @@ def get_artifact(artifact_id: str):
     return FileResponse(decoded)
 
 
+def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
+    parent = _parent_run_context(payload.parent_run_id)
+    current_settings = _current_settings_from_parent(parent, payload)
+    parameter_patch, edit_like = _parameter_feedback(payload.message, current_settings)
+    forced_instructions = {
+        str(agent): str(text)
+        for agent, text in (payload.forced_agent_instructions or {}).items()
+        if str(agent).strip() and str(text).strip()
+    }
+    forced_target = _target_agent_for_rerun(payload.rerun_stage_id) if payload.rerun_stage_id else ""
+    is_followup = bool(parent and (forced_target or _should_use_parent_context(payload.message, parameter_patch, edit_like)))
+    settings_patch = dict(parameter_patch.get("settings_patch") or {}) if is_followup else {}
+    manual_settings_patch = _clean_settings_patch(payload.settings_patch)
+    if is_followup and manual_settings_patch:
+        settings_patch.update(manual_settings_patch)
+    agent_instructions = dict(parameter_patch.get("agent_instructions") or {}) if is_followup else {}
+    target_agent = str(parameter_patch.get("target_agent") or "")
+    if forced_target:
+        target_agent = forced_target
+    if forced_instructions:
+        agent_instructions.update(forced_instructions)
+
+    music_path = _valid_music_path(payload.music_path)
+    if not music_path and is_followup:
+        music_path = _valid_music_path(str((parent.get("settings") or {}).get("music_path") or ""))
+
+    if is_followup and not settings_patch and not agent_instructions:
+        target_agent = "script_agent"
+        agent_instructions["script_agent"] = (
+            "Apply the user's follow-up feedback to the script while preserving the original source prompt and named subject. "
+            "Do not treat the follow-up complaint as a new video topic."
+        )
+
+    source_prompt = _source_prompt_from_parent(parent) if is_followup else _strip_duration_instruction(payload.message)
+    source_prompt = source_prompt or _strip_duration_instruction(payload.message)
+    effective_duration = _safe_duration(int(
+        settings_patch.get("duration")
+        or _duration_from_text(payload.message)
+        or (parent.get("duration") if is_followup else None)
+        or _safe_duration(payload.duration)
+    ))
+    notes = _route_notes(payload, parent, is_followup, agent_instructions)
+    feedback = _strip_duration_instruction(payload.message) or payload.message
+    display_message = f"Fix: {_clip(feedback, 90)} -> {_clip(source_prompt, 90)}" if is_followup else source_prompt
+    genre = _genre_for(payload.genre_id)
+    route_summary = (
+        f"{genre['display_name']} remake for: {source_prompt}"
+        if is_followup
+        else f"{genre['display_name']} pipeline run for: {source_prompt}"
+    )
+    repair_notes = [
+        f"Original prompt: {source_prompt}",
+        f"User follow-up feedback: {feedback}",
+    ] if is_followup else []
+    if target_agent:
+        repair_notes.append(f"Target agent: {target_agent}")
+    return {
+        "intent": "edit_video" if is_followup else "new_video",
+        "is_followup": is_followup,
+        "parent_run_id": str(parent.get("id") or "") if is_followup else "",
+        "rerun_stage_id": payload.rerun_stage_id if forced_target else "",
+        "effective_message": source_prompt,
+        "source_prompt": source_prompt,
+        "display_message": display_message,
+        "effective_duration": effective_duration,
+        "notes": notes,
+        "target_agent": target_agent,
+        "settings_patch": settings_patch,
+        "music_path": music_path,
+        "agent_instructions": agent_instructions,
+        "repair_notes": repair_notes,
+        "route_summary": route_summary,
+    }
+
+
+def _target_agent_for_rerun(stage_id: str) -> str:
+    stage_id = str(stage_id or "").strip()
+    if stage_id in {
+        "topic_discovery_agent",
+        "research_agent",
+        "script_agent",
+        "audio_agent",
+        "caption_agent",
+        "timed_visual_agent",
+        "asset_agent",
+        "music_agent",
+        "render_agent",
+        "thumbnail_agent",
+    }:
+        return stage_id
+    if stage_id == "validation_agent":
+        return "validation_agent"
+    return "master_agent"
+
+
+def _stage_option_instruction(
+    stage_id: str,
+    settings_patch: dict[str, Any],
+    forced_agent_instructions: dict[str, str],
+) -> str:
+    settings = _clean_settings_patch(settings_patch)
+    bits: list[str] = []
+    if settings:
+        rendered = ", ".join(f"{key}={value}" for key, value in settings.items())
+        bits.append(f"Apply these playground options: {rendered}.")
+    extra = "; ".join(str(text).strip() for text in (forced_agent_instructions or {}).values() if str(text).strip())
+    if extra:
+        bits.append(f"Additional node instruction: {extra}")
+    if stage_id == "render_agent" and any(key in settings for key in {"visual_motion", "transition_style", "transition_seconds", "zoom_variant"}):
+        bits.append("Use the selected render animation settings during the FFmpeg render.")
+    return " ".join(bits)
+
+
+def _clean_settings_patch(settings_patch: dict[str, Any] | None) -> dict[str, Any]:
+    source = settings_patch if isinstance(settings_patch, dict) else {}
+    cleaned: dict[str, Any] = {}
+    if "voice_speed" in source:
+        cleaned["voice_speed"] = round(_clamp_float(source.get("voice_speed"), 1.0, 0.65, 1.4), 2)
+    if "caption_words" in source:
+        cleaned["caption_words"] = int(_clamp_int(source.get("caption_words"), 4, 1, 8))
+    if "image_count" in source:
+        cleaned["image_count"] = int(_clamp_int(source.get("image_count"), 8, 1, 24))
+    if "music_volume" in source:
+        cleaned["music_volume"] = round(_clamp_float(source.get("music_volume"), 0.12, 0.0, 0.8), 2)
+    if "min_visual_segment_ms" in source:
+        cleaned["min_visual_segment_ms"] = int(_clamp_int(source.get("min_visual_segment_ms"), 3500, 1200, 8000))
+    if "visual_motion" in source:
+        cleaned["visual_motion"] = _as_bool(source.get("visual_motion"), True)
+    if "transition_style" in source:
+        style = str(source.get("transition_style") or "").strip().lower()
+        aliases = {"slides": "slide", "none": "cut", "off": "cut"}
+        cleaned["transition_style"] = aliases.get(style, style) if aliases.get(style, style) in TRANSITION_STYLES else "slide"
+    if "transition_seconds" in source:
+        cleaned["transition_seconds"] = round(_clamp_float(source.get("transition_seconds"), 0.45, 0.0, 1.2), 2)
+    if "zoom_variant" in source:
+        variant = str(source.get("zoom_variant") or "").strip().lower()
+        aliases = {"alternate": "mixed", "center": "mixed", "in": "center_in", "out": "center_out", "none": "still", "off": "still"}
+        cleaned["zoom_variant"] = aliases.get(variant, variant) if aliases.get(variant, variant) in ZOOM_VARIANTS else "mixed"
+    if cleaned.get("visual_motion") is False and "zoom_variant" not in cleaned:
+        cleaned["zoom_variant"] = "still"
+    return cleaned
+
+
+def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _display_stage_name(value: str) -> str:
+    return str(value or "").replace("_", " ").strip().title() or "Selected"
+
+
+def _parameter_feedback(message: str, current_settings: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    fallback_patch = _fallback_parameter_patch(message)
+    fallback_edit_like = _looks_like_edit_text(message)
+    try:
+        from desktop_pipeline.parameter_agent import looks_like_edit_request, map_parameter_request
+
+        patch = map_parameter_request(message, current_settings).to_dict()
+        edit_like = bool(looks_like_edit_request(message))
+        return patch, edit_like or bool(patch.get("settings_patch") or patch.get("agent_instructions") or patch.get("target_agent"))
+    except Exception:
+        return fallback_patch, fallback_edit_like or bool(fallback_patch.get("agent_instructions"))
+
+
+def _should_use_parent_context(message: str, parameter_patch: dict[str, Any], edit_like: bool) -> bool:
+    if parameter_patch.get("settings_patch") or parameter_patch.get("agent_instructions") or parameter_patch.get("target_agent"):
+        return True
+    if _looks_like_new_video_request(message):
+        return False
+    return edit_like
+
+
+def _looks_like_new_video_request(message: str) -> bool:
+    text = " ".join(str(message or "").lower().split())
+    return bool(
+        re.search(r"\b(?:make|create|generate)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:video|short|reel)\s+(?:on|about|for)\b", text)
+        or re.search(r"\b(?:video|short|reel)\s+(?:on|about)\b", text)
+    )
+
+
+def _fallback_parameter_patch(message: str) -> dict[str, Any]:
+    text = " ".join(str(message or "").lower().split())
+    if _mentions_any(text, "script", "story", "narration", "hook", "writing", "plot", "content") and _mentions_any(
+        text,
+        "bad",
+        "wrong",
+        "random",
+        "unusual",
+        "weird",
+        "generic",
+        "boring",
+        "better",
+        "improve",
+        "not good",
+        "look good",
+        "doesnt",
+        "doesn't",
+        "does not",
+        "off topic",
+        "unrelated",
+    ):
+        return {
+            "target_agent": "script_agent",
+            "settings_patch": {},
+            "agent_instructions": {
+                "script_agent": (
+                    "Regenerate the script around the original source prompt. Keep the same named subject, "
+                    "remove random or unrelated beats, and use a fresh coherent angle."
+                )
+            },
+            "reason": "script quality or topic alignment needs repair",
+        }
+    return {"target_agent": "", "settings_patch": {}, "agent_instructions": {}, "reason": ""}
+
+
+def _looks_like_edit_text(message: str) -> bool:
+    text = " ".join(str(message or "").lower().split())
+    return _mentions_any(
+        text,
+        "change",
+        "fix",
+        "remake",
+        "redo",
+        "again",
+        "too",
+        "less",
+        "more",
+        "faster",
+        "slower",
+        "loud",
+        "quiet",
+        "bad",
+        "wrong",
+        "not good",
+        "same",
+        "repeat",
+        "random",
+        "unusual",
+        "weird",
+        "generic",
+        "boring",
+        "better",
+        "improve",
+        "off topic",
+        "doesnt",
+        "doesn't",
+    )
+
+
+def _mentions_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _parent_run_context(run_id: str) -> dict[str, Any]:
+    run_id = str(run_id or "").strip()
+    if not run_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,90}", run_id):
+        return {}
+    path = _existing_run_path(run_id)
+    if path.exists():
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            return run if isinstance(run, dict) else {}
+        except Exception:
+            return {}
+    run = _read_run_from_db(run_id)
+    return run or {}
+
+
+def _current_settings_from_parent(parent: dict[str, Any], payload: PlaygroundRunCreate) -> dict[str, Any]:
+    settings = dict(DEFAULT_PLAYGROUND_SETTINGS)
+    settings["duration"] = parent.get("duration") or payload.duration
+    for source in (parent.get("settings") or {}, parent.get("settings_patch") or {}):
+        if isinstance(source, dict):
+            settings.update(_clean_settings_patch(source))
+            if source.get("duration") is not None:
+                settings["duration"] = source.get("duration")
+            if source.get("music_path"):
+                settings["music_path"] = _valid_music_path(str(source.get("music_path") or ""))
+    if payload.music_path:
+        settings["music_path"] = _valid_music_path(payload.music_path)
+    return settings
+
+
+def _valid_music_path(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    path = _resolve_existing_path(Path(raw))
+    music_root = (_pipeline_data_dir() / "assets" / "music").expanduser().resolve()
+    if not path.exists() or not path.is_file():
+        return ""
+    if path.suffix.lower() not in ALLOWED_MUSIC_EXTENSIONS:
+        return ""
+    try:
+        path.relative_to(music_root)
+    except ValueError:
+        return ""
+    return str(path)
+
+
+def _source_prompt_from_parent(parent: dict[str, Any]) -> str:
+    candidates = (
+        parent.get("source_prompt"),
+        parent.get("effective_message"),
+        parent.get("user_message"),
+        parent.get("raw_user_message"),
+    )
+    for value in candidates:
+        text = _strip_duration_instruction(str(value or ""))
+        if text and not text.lower().startswith("fix:"):
+            return text
+    return ""
+
+
+def _route_notes(
+    payload: PlaygroundRunCreate,
+    parent: dict[str, Any],
+    is_followup: bool,
+    agent_instructions: dict[str, str],
+) -> str:
+    parts = [payload.notes.strip()] if payload.notes.strip() else []
+    if not is_followup:
+        return "\n\n".join(parts)
+
+    source_prompt = _source_prompt_from_parent(parent)
+    feedback = payload.message.strip()
+    context_lines = [
+        "FOLLOW-UP EDIT CONTEXT:",
+        f"- Original source prompt to preserve: {source_prompt}",
+        f"- Latest user feedback: {feedback}",
+        "- Keep the same topic, named subject, genre, and duration unless this feedback explicitly changes them.",
+        "- Treat the feedback as repair instructions, not as the new video topic.",
+    ]
+    if agent_instructions:
+        instruction_text = "; ".join(f"{agent}: {text}" for agent, text in agent_instructions.items() if str(text).strip())
+        if instruction_text:
+            context_lines.append(f"- Targeted agent repair: {instruction_text}")
+    previous_script = _previous_script_excerpt(parent)
+    if previous_script:
+        context_lines.extend(
+            [
+                "",
+                "PREVIOUS SCRIPT CONTEXT ONLY:",
+                "Use this to understand what the user is reacting to. Do not copy this failed wording.",
+                previous_script,
+            ]
+        )
+    parts.append("\n".join(context_lines))
+    return "\n\n".join(parts)
+
+
+def _previous_script_excerpt(run: dict[str, Any]) -> str:
+    for stage in run.get("stages", []) or []:
+        if not isinstance(stage, dict) or stage.get("id") != "script_agent":
+            continue
+        output = stage.get("output_json") if isinstance(stage.get("output_json"), dict) else {}
+        title = _clip(str(output.get("title") or ""), 140)
+        narration = _clip(str(output.get("narration") or ""), 1400)
+        if title or narration:
+            return "\n".join(part for part in (f"Title: {title}" if title else "", f"Narration excerpt: {narration}" if narration else "") if part)
+    return ""
+
+
+def _compact_chat_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    compact: list[dict[str, str]] = []
+    for item in (history or [])[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()[:30]
+        content = _clip(str(item.get("content") or ""), 500)
+        if role and content:
+            compact.append({"role": role, "content": content})
+    return compact
+
+
+def _clip(text: str, limit: int) -> str:
+    cleaned = " ".join(str(text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)].rstrip() + "..."
+
+
 def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     now = _now()
     run_id = str(uuid4())
     genre = _genre_for(payload.genre_id)
-    effective_message = _effective_message(payload)
-    effective_duration = _effective_duration(payload)
-    route_summary = f"{genre['display_name']} pipeline run for: {effective_message}"
+    route = _playground_route(payload)
+    effective_message = str(route["effective_message"])
+    effective_duration = int(route["effective_duration"])
+    parent_context = _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
+    effective_settings = _current_settings_from_parent(parent_context, payload)
+    effective_settings.update(_clean_settings_patch(route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}))
+    effective_settings["duration"] = effective_duration
+    effective_settings["music_path"] = str(route.get("music_path") or "")
+    route_summary = str(route["route_summary"])
+    intent = str(route["intent"])
     stages = [_initial_stage(stage, now) for stage in VISIBLE_STAGES]
     stages[0] = _mark_stage_dict(
         stages[0],
@@ -431,13 +1004,17 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
             "chat_message": payload.message,
             "genre_id": genre["genre_id"],
             "notes": payload.notes,
+            "parent_run_id": payload.parent_run_id,
+            "chat_history": _compact_chat_history(payload.chat_history),
         },
         output_json={
-            "intent": "new_video",
+            "intent": intent,
             "target_agent": "final_pipeline",
+            "parent_run_id": route.get("parent_run_id", ""),
+            "source_prompt": route.get("source_prompt", ""),
             "planned_agents": [stage["id"] for stage in VISIBLE_STAGES[3:]],
         },
-        message="Playground routed this as a new final-pipeline video run",
+        message="Playground routed this as a follow-up edit run" if route["is_followup"] else "Playground routed this as a new final-pipeline video run",
     )
     stages[1] = _mark_stage_dict(
         stages[1],
@@ -446,13 +1023,34 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
         output_json={"reason": "Style sampling only runs during desktop calibration."},
         message="Skipped for direct playground generation",
     )
-    stages[2] = _mark_stage_dict(
-        stages[2],
-        "skipped",
-        now,
-        output_json={"reason": "Parameter mapping only runs for follow-up edit/remake prompts."},
-        message="Skipped because this is a new generation request",
-    )
+    if route["is_followup"]:
+        stages[2] = _mark_stage_dict(
+            stages[2],
+            "succeeded",
+            now,
+            input_json={
+                "message": payload.message,
+                "parent_run_id": route.get("parent_run_id", ""),
+                "previous_topic": route.get("source_prompt", ""),
+                "chat_history": _compact_chat_history(payload.chat_history),
+            },
+            output_json={
+                "intent": intent,
+                "target_agent": route.get("target_agent", ""),
+                "settings_patch": route.get("settings_patch", {}),
+                "agent_instructions": route.get("agent_instructions", {}),
+                "repair_notes": route.get("repair_notes", []),
+            },
+            message="Mapped follow-up feedback into repair notes for the responsible agent",
+        )
+    else:
+        stages[2] = _mark_stage_dict(
+            stages[2],
+            "skipped",
+            now,
+            output_json={"reason": "Parameter mapping only runs for follow-up edit/remake prompts."},
+            message="Skipped because this is a new generation request",
+        )
     stages[3] = _mark_stage_dict(
         stages[3],
         "running",
@@ -464,6 +1062,12 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
             "duration": effective_duration,
             "raw_message": payload.message,
             "cleaned_message": effective_message,
+            "source_prompt": route.get("source_prompt", ""),
+            "parent_run_id": route.get("parent_run_id", ""),
+            "settings_patch": route.get("settings_patch", {}),
+            "settings": effective_settings,
+            "music_path": route.get("music_path", ""),
+            "agent_instructions": route.get("agent_instructions", {}),
             "selected_provider": payload.llm_provider,
             "selected_model": payload.llm_model or "environment default",
         },
@@ -472,11 +1076,20 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "id": run_id,
-        "user_message": effective_message,
+        "user_message": str(route["display_message"]),
+        "effective_message": effective_message,
+        "source_prompt": str(route.get("source_prompt") or effective_message),
         "raw_user_message": payload.message,
+        "parent_run_id": str(route.get("parent_run_id") or ""),
+        "intent": intent,
         "genre_id": genre["genre_id"],
         "duration": effective_duration,
-        "notes": payload.notes,
+        "notes": str(route["notes"]),
+        "settings_patch": route.get("settings_patch", {}),
+        "settings": effective_settings,
+        "music_path": str(route.get("music_path") or ""),
+        "agent_instructions": route.get("agent_instructions", {}),
+        "chat_history": _compact_chat_history(payload.chat_history),
         "llm_provider": payload.llm_provider,
         "llm_model": payload.llm_model,
         "status": "running",
@@ -521,18 +1134,59 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
         transcript.parent.mkdir(parents=True, exist_ok=True)
         _update_run(run_id, lambda run: _mark_stage(run, "master_agent", "succeeded", "Shared final pipeline process is starting"))
         env = _pipeline_env(payload)
+        route = _playground_route(payload)
         cmd = [
             sys.executable,
             "main.py",
             "--topic",
-            _effective_message(payload),
+            str(route["effective_message"]),
             "--genre",
             payload.genre_id,
             "--duration",
-            str(_effective_duration(payload)),
+            str(route["effective_duration"]),
         ]
-        if payload.notes:
-            cmd.extend(["--notes", payload.notes])
+        if route.get("source_prompt"):
+            cmd.extend(["--source-prompt", str(route["source_prompt"])])
+        if route.get("notes"):
+            cmd.extend(["--notes", str(route["notes"])])
+        settings_patch = route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}
+        settings_for_cmd = _current_settings_from_parent(_parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id)), payload)
+        settings_for_cmd.update(_clean_settings_patch(settings_patch))
+        if settings_for_cmd.get("voice_speed") is not None:
+            cmd.extend(["--voice-speed", str(settings_for_cmd["voice_speed"])])
+        if settings_for_cmd.get("caption_words") is not None:
+            cmd.extend(["--caption-words", str(settings_for_cmd["caption_words"])])
+        if settings_for_cmd.get("image_count") is not None:
+            cmd.extend(["--image-count", str(settings_for_cmd["image_count"])])
+        music_path = _valid_music_path(str(route.get("music_path") or settings_for_cmd.get("music_path") or payload.music_path or ""))
+        if music_path:
+            cmd.extend(["--music-path", music_path])
+        if settings_for_cmd.get("music_volume") is not None:
+            cmd.extend(["--music-volume", str(settings_for_cmd["music_volume"])])
+        if settings_for_cmd.get("min_visual_segment_ms") is not None:
+            cmd.extend(["--min-visual-segment-ms", str(settings_for_cmd["min_visual_segment_ms"])])
+        if settings_for_cmd.get("visual_motion") is not None:
+            cmd.extend(["--visual-motion", "on" if settings_for_cmd["visual_motion"] else "off"])
+        if settings_for_cmd.get("transition_style") is not None:
+            cmd.extend(["--transition-style", str(settings_for_cmd["transition_style"])])
+        if settings_for_cmd.get("transition_seconds") is not None:
+            cmd.extend(["--transition-seconds", str(settings_for_cmd["transition_seconds"])])
+        if settings_for_cmd.get("zoom_variant") is not None:
+            cmd.extend(["--zoom-variant", str(settings_for_cmd["zoom_variant"])])
+        agent_instructions = route.get("agent_instructions") if isinstance(route.get("agent_instructions"), dict) else {}
+        if agent_instructions:
+            cmd.extend(["--agent-instructions-json", json.dumps(agent_instructions, ensure_ascii=True)])
+        if route.get("rerun_stage_id"):
+            parent = _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
+            parent_run_dir = _resolve_existing_path(Path(str(parent.get("pipeline_run_dir") or "")))
+            if not parent_run_dir.exists():
+                raise RuntimeError("Cannot rerun this node because the parent pipeline artifacts are missing.")
+            cmd.extend([
+                "--resume-from-run-dir",
+                str(parent_run_dir),
+                "--rerun-stage",
+                str(route["rerun_stage_id"]),
+            ])
 
         pipeline_root = _pipeline_root()
         if not (pipeline_root / "main.py").exists():
@@ -683,11 +1337,22 @@ def _complete_successful_run(run: dict[str, Any]) -> None:
 def _fail_run_from_pipeline_error(run: dict[str, Any], fallback_message: str) -> None:
     _refresh_run_from_pipeline_files(run)
     error = _pipeline_error(run)
-    visible_stage = PIPELINE_STAGE_TO_VISIBLE.get(str(error.get("stage") or ""), "")
+    visible_stage = _visible_stage_for_pipeline_stage(str(error.get("stage") or ""))
     message = str(error.get("message") or fallback_message)
     if not visible_stage:
         visible_stage = _current_or_first_unfinished_stage(run)
     _fail_run(run, visible_stage, message, error)
+
+
+def _visible_stage_for_pipeline_stage(stage: str) -> str:
+    if stage in PIPELINE_STAGE_TO_VISIBLE:
+        return PIPELINE_STAGE_TO_VISIBLE[stage]
+    normalized = re.sub(r"_repair_\d+$", "", stage)
+    if normalized in PIPELINE_STAGE_TO_VISIBLE:
+        return PIPELINE_STAGE_TO_VISIBLE[normalized]
+    if normalized.startswith("validate_"):
+        return "validation_agent"
+    return ""
 
 
 def _fail_run(run: dict[str, Any], stage_id: str, message: str, details: dict[str, Any] | None = None) -> None:
@@ -743,7 +1408,7 @@ def _refresh_run_from_pipeline_files(run: dict[str, Any]) -> None:
         if output_json is not None:
             stage["output_json"] = _merge_validation_summary(stage_id, output_json, run_dir)
             if stage["status"] != "failed":
-                stage["status"] = "succeeded"
+                stage["status"] = "skipped" if stage["output_json"].get("status") == "skipped" else "succeeded"
                 stage["completed_at"] = stage["completed_at"] or _mtime(log_dir / "output.json")
         if events:
             stage["events"] = events
@@ -763,7 +1428,8 @@ def _merge_validation_summary(stage_id: str, output_json: dict[str, Any], run_di
     if not validation_stage:
         return output_json
     error = _read_json(run_dir / "errors" / "error.json")
-    if isinstance(error, dict) and str(error.get("stage")) in {validation_stage, f"{validation_stage}_result"}:
+    error_stage = re.sub(r"_repair_\d+$", "", str(error.get("stage") or "")) if isinstance(error, dict) else ""
+    if isinstance(error, dict) and error_stage in {validation_stage, f"{validation_stage}_result"}:
         output_json = dict(output_json)
         output_json["validation"] = {"passed": False, "error": error.get("message", "")}
         return output_json
@@ -785,10 +1451,14 @@ def _collect_stage_artifacts(stage_id: str, run_dir: Path, log_dir: Path, output
         if output_json.get("timed_visual_cues_path"):
             paths.append(Path(str(output_json.get("timed_visual_cues_path"))))
         paths.extend(Path(path) for path in output_json.get("image_paths", []) if path)
+        paths.extend(Path(path) for path in output_json.get("sfx_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("video_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("media_paths", []) if path)
     elif stage_id == "audio_agent":
         paths.extend(Path(path) for path in (output_json.get("narration_path"), output_json.get("final_audio_path")) if path)
+    elif stage_id == "music_agent":
+        paths.extend(Path(path) for path in (output_json.get("input_audio_path"), output_json.get("final_audio_path"), output_json.get("music_path")) if path)
+        paths.extend(Path(path) for path in output_json.get("sfx_paths", []) if path)
     elif stage_id == "caption_agent":
         paths.extend(Path(path) for path in (output_json.get("srt_path"), output_json.get("ass_path")) if path)
     elif stage_id == "timed_visual_agent":
@@ -814,6 +1484,7 @@ def _collect_final_artifacts(run: dict[str, Any]) -> list[dict[str, Any]]:
             [
                 run_dir / "output" / "final.mp4",
                 run_dir / "output" / "final_audio_check.wav",
+                run_dir / "intermediate" / "audio" / "final_audio_with_music.wav",
                 run_dir / "output" / "thumbnails" / "shorts_cover.jpg",
                 run_dir / "output" / "thumbnails" / "youtube_thumbnail.jpg",
                 run_dir / "logs" / "timed_visual_agent" / "timed_visual_cues.json",
@@ -821,6 +1492,16 @@ def _collect_final_artifacts(run: dict[str, Any]) -> list[dict[str, Any]]:
                 run_dir / "errors" / "error.json",
             ]
         )
+    for stage_id, keys in {
+        "render_agent": ("video_path",),
+        "thumbnail_agent": ("shorts_cover_path", "youtube_thumbnail_path"),
+        "asset_agent": ("asset_trace_path", "timed_visual_cues_path"),
+        "music_agent": ("final_audio_path", "music_path"),
+    }.items():
+        output = _stage_output_json(run, stage_id)
+        paths.extend(Path(str(output.get(key))) for key in keys if output.get(key))
+        if stage_id == "music_agent":
+            paths.extend(Path(str(path)) for path in output.get("sfx_paths", []) if path)
     return _artifact_list(paths)
 
 
@@ -828,13 +1509,27 @@ def _final_output_json(run: dict[str, Any]) -> dict[str, Any]:
     run_dir_text = str(run.get("pipeline_run_dir") or "")
     run_dir = Path(run_dir_text) if run_dir_text else None
     final_video = run_dir / "output" / "final.mp4" if run_dir else None
+    video_path = ""
+    if final_video and _resolve_existing_path(final_video).exists():
+        video_path = str(final_video)
+    else:
+        video_path = str(_stage_output_json(run, "render_agent").get("video_path") or "")
     return {
         "status": run.get("status", "running"),
         "pipeline_run_dir": run_dir_text,
-        "video_path": str(final_video) if final_video and final_video.exists() else "",
+        "video_path": video_path,
         "stdout_path": run.get("stdout_path", ""),
         "returncode": run.get("returncode"),
     }
+
+
+def _stage_output_json(run: dict[str, Any], stage_id: str) -> dict[str, Any]:
+    try:
+        stage = _stage_by_id(run, stage_id)
+    except KeyError:
+        return {}
+    output = stage.get("output_json")
+    return output if isinstance(output, dict) else {}
 
 
 def _artifact_list(paths: list[Path]) -> list[dict[str, Any]]:
@@ -1087,17 +1782,29 @@ def _broken_run_summary(path: Path, exc: Exception) -> dict[str, Any]:
 def _safe_payload(payload: PlaygroundRunCreate) -> dict[str, Any]:
     data = payload.model_dump()
     data["llm_api_key"] = "provided" if payload.llm_api_key.strip() else ""
-    data["effective_message"] = _effective_message(payload)
-    data["effective_duration"] = _effective_duration(payload)
+    data["chat_history"] = _compact_chat_history(payload.chat_history)
+    route = _playground_route(payload)
+    data["effective_message"] = route["effective_message"]
+    data["effective_duration"] = route["effective_duration"]
+    data["intent"] = route["intent"]
+    data["source_prompt"] = route["source_prompt"]
+    data["settings_patch"] = route["settings_patch"]
+    data["settings"] = {
+        **_current_settings_from_parent(_parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id)), payload),
+        **_clean_settings_patch(route["settings_patch"] if isinstance(route["settings_patch"], dict) else {}),
+    }
+    data["settings"]["music_path"] = str(route.get("music_path") or "")
+    data["music_path"] = str(route.get("music_path") or "")
+    data["agent_instructions"] = route["agent_instructions"]
     return data
 
 
 def _effective_duration(payload: PlaygroundRunCreate) -> int:
-    return _duration_from_text(payload.message) or _safe_duration(payload.duration)
+    return int(_playground_route(payload)["effective_duration"])
 
 
 def _effective_message(payload: PlaygroundRunCreate) -> str:
-    return _strip_duration_instruction(payload.message)
+    return str(_playground_route(payload)["effective_message"])
 
 
 def _safe_duration(duration: int) -> int:

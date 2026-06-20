@@ -38,6 +38,7 @@ services:
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
       PLAYGROUND_PIPELINE_DATA_DIR: /app/playground/data/pipeline
       PLAYGROUND_RUNS_DIR: /app/data/playground/runs
+      PLAYGROUND_MAX_MUSIC_UPLOAD_MB: ${PLAYGROUND_MAX_MUSIC_UPLOAD_MB:-300}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8084}
       GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
     ports:

@@ -110,7 +110,25 @@ def _topic_terms(text: str) -> list[str]:
 
 def _allows_fictional_sources(text: str) -> bool:
     lower = text.lower()
-    return any(term in lower for term in ("iron man", "avengers", "marvel", "batman", "naruto", "harry potter", "movie", "anime", "game"))
+    return any(
+        term in lower
+        for term in (
+            "iron man",
+            "avengers",
+            "marvel",
+            "doctor strange",
+            "spider-man",
+            "spider man",
+            "spiderman",
+            "black knight",
+            "batman",
+            "naruto",
+            "harry potter",
+            "movie",
+            "anime",
+            "game",
+        )
+    )
 
 
 def _clean_items(value: Any, fallback: list[str], max_items: int) -> list[str]:

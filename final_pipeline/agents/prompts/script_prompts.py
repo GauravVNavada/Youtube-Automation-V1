@@ -96,6 +96,9 @@ Hard rules:
 - No calls to action.
 - No citations, source ids, URLs, or bibliography text in the narration.
 - Do not copy source snippets directly.
+- Do not put quote marks around titles, names, phrases, or emphasis in the narration.
+- Never output empty quote marks such as '' or "" in the narration.
+- Avoid dialogue-style quoted text unless the user explicitly asks for dialogue.
 - Use simple words. Avoid hard vocabulary unless the topic needs it.
 - Every sentence should add one concrete detail.
 - Avoid generic filler.
@@ -106,7 +109,9 @@ Hard rules:
 - Do not treat duration, platform, genre, or formatting instructions as visual subjects.
 
 Grounding rules:
-- Treat local database/reference scripts as inspiration for pacing, structure, hooks, and visual style; do not copy their exact words unless useful.
+- Treat local database/reference scripts as inspiration for pacing, structure, hooks, and visual style only.
+- Write fresh narration with new wording, new examples, and a new angle for the requested topic.
+- Do not copy sentences, paragraph flow, or distinctive phrases from reference scripts or few-shot examples.
 - You may invent fresh names, objects, scenes, and wording for fictional/story topics when they are believable and safe.
 - If external research facts or web/source snippets exist, narration must clearly use at least one real anchor from them.
 - A real anchor can be a named place, event, person, date, source title, urban legend, documented claim, object, or location.
@@ -148,6 +153,8 @@ SFX cue rules:
 - sfx_cues may be empty if sound effects would be distracting.
 - Every trigger_word must appear in the narration.
 - sfx_type must be short_snake_case.
+- When input.sfx_catalog is present, prefer one of its id values for sfx_type. Choose by matching the catalog tags, aliases, and use_cases to the story beat.
+- If no catalog item fits, use the closest simple catalog id rather than inventing an overly specific sound name.
 - Use subtle, useful sounds: phone_buzz, paper_rustle, door_creak, heartbeat, static_glitch, camera_shutter, crowd_murmur.
 - Do not overdo sound effects.
 
@@ -161,6 +168,7 @@ Genre handling:
 - mystery_stories: clue chain, evidence object, clear reveal.
 - reddit_stories: realistic social conflict, concrete proof, no overacting.
 - history_facts: real anchors, dates/places only when supported, no fake legends.
+- comics: comic-book stakes, panel-like visual beats, hero/villain conflict, avoid relying on movie footage.
 - science_facts: simple mechanism, no unsupported certainty.
 - finance/legal/medical: cautious wording, no advice beyond research.
 - explainers: problem, surprising detail, simple takeaway.
@@ -408,8 +416,9 @@ def build_script_user_payload(
     )
 
 
-def messages_with_user(user_payload: str) -> list[dict[str, str]]:
-    return append_user_message(messages_base(), user_payload, MAX_INPUT_CHARS)
+def messages_with_user(user_payload: str, *, include_examples: bool = True) -> list[dict[str, str]]:
+    base = messages_base() if include_examples else base_messages(SYSTEM_PROMPT)
+    return append_user_message(base, user_payload, MAX_INPUT_CHARS)
 
 
 def messages_with_structured_user(

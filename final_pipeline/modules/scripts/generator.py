@@ -5,6 +5,8 @@ import re
 from typing import Any
 
 from agents.prompts.script_prompts import (
+    EXAMPLE_ASSISTANT_OUTPUT_1,
+    EXAMPLE_ASSISTANT_OUTPUT_2,
     MAX_INPUT_CHARS,
     MAX_OUTPUT_TOKENS,
     SYSTEM_PROMPT,
@@ -13,7 +15,37 @@ from agents.prompts.script_prompts import (
 )
 from app.schemas import GenreConfig, GrowthContext, ImageCue, ResearchOutput, ScriptOutput, SfxCue
 from modules.assets.subject_lock import apply_subject_lock_to_cues, infer_subject_lock
+from modules.audio.sfx_catalog import catalog_for_prompt
 from modules.scripts.structure import polish_script_ending, validate_narrative_structure
+
+
+SCRIPT_VALIDATION_MAX_OUTPUT_TOKENS = 500
+
+
+SCRIPT_VALIDATION_SYSTEM_PROMPT = """
+You are the SCRIPT_VALIDATION agent for an AI YouTube Shorts generator.
+Return exactly one valid JSON object:
+{
+  "passed": true,
+  "issues": []
+}
+
+Judge only subjective script quality that benefits from language understanding:
+- Whether the script is clearly about the user's requested topic after normalizing spelling, hyphens, aliases, and casual wording.
+- Whether the script copies too much from reference/example scripts.
+
+Rules:
+- Be practical, not brittle.
+- Normalize names like "spiderman", "spider man", and "Spider-Man" as the same subject.
+- Do not treat duration words, platform words, months, years, or formatting instructions as part of a named subject unless the user clearly asks about a specific dated event.
+- Do not treat provider/error text like "Gemini retries", "Last Gemini error", or "Local script fallback" as the requested video subject.
+- Only treat Gemini as the subject when the raw request is clearly about Gemini itself, not when it appears inside a pipeline error message.
+- For a request like "spider man january 2020", expect a Spider-Man topic with a January 2020 angle/context; do not require the exact phrase "spider man january 2020".
+- Pass if the script uses a clear alias or natural phrasing for the topic.
+- Reference scripts are inspiration. Reject only if the narration copies exact long sentences, distinctive phrases, or most of the same wording.
+- Do not reject merely because the script has the same genre shape, hook style, pacing, or broad short-video structure.
+- If failed, issues must be short actionable strings.
+""".strip()
 
 
 def build_user_prompt(
@@ -23,8 +55,14 @@ def build_user_prompt(
     reference_scripts: list[dict[str, Any]],
     user_notes: str = "",
     growth_context: GrowthContext | dict[str, Any] | None = None,
+    previous_failures: list[str] | None = None,
+    include_examples: bool | None = None,
 ) -> str:
     research = _filter_research_for_topic(_compact_research(growth_context), topic)
+    failures = [str(item) for item in (previous_failures or []) if str(item).strip()][:8]
+    selected_references = _select_references(topic, reference_scripts, limit=6)
+    if include_examples is None:
+        include_examples = _should_include_prompt_examples(topic, failures)
     payload = {
         "raw_request": topic,
         "topic": topic,
@@ -42,11 +80,13 @@ def build_user_prompt(
             "banned_phrases": genre.banned_phrases,
         },
         "duration": duration,
-        "reference_scripts": [_compact_reference(item) for item in _select_references(topic, reference_scripts, limit=6)],
+        "reference_scripts": [_compact_reference(item) for item in selected_references],
         "user_notes": user_notes or "",
+        "previous_failures": failures,
         "research": research,
+        "sfx_catalog": catalog_for_prompt(),
     }
-    messages = messages_with_user(_safe_user_payload_json(payload))
+    messages = messages_with_user(_safe_user_payload_json(payload), include_examples=include_examples)
     return render_messages_for_single_prompt(messages[1:])
 
 
@@ -58,19 +98,35 @@ def generate_script(
     reference_scripts: list[dict[str, Any]],
     user_notes: str = "",
     growth_context: GrowthContext | dict[str, Any] | None = None,
+    previous_failures: list[str] | None = None,
 ) -> ScriptOutput:
     if not provider:
         raise RuntimeError("No online LLM provider configured")
-    user_prompt = build_user_prompt(topic, genre, duration, reference_scripts, user_notes, growth_context)
-    research = _compact_research(growth_context)
+    research = _filter_research_for_topic(_compact_research(growth_context), topic)
+    selected_references = _select_references(topic, reference_scripts, limit=6)
     last_error = ""
     for attempt in range(1, 4):
         try:
+            attempt_failures = [str(item) for item in (previous_failures or []) if str(item).strip()]
+            if last_error:
+                attempt_failures.append(last_error)
+            user_prompt = build_user_prompt(
+                topic,
+                genre,
+                duration,
+                reference_scripts,
+                user_notes,
+                research,
+                previous_failures=attempt_failures,
+                include_examples=_should_include_prompt_examples(topic, attempt_failures, attempt=attempt),
+            )
             data = provider.generate_json(SYSTEM_PROMPT, user_prompt + _retry_note(attempt, last_error), MAX_OUTPUT_TOKENS)
             script = script_from_mapping(data, provider=getattr(provider, "name", "online"), topic=topic, research=research)
             script = _repair_script(script, genre, research)
             script.estimated_duration = duration
-            issues = validate_script_grounding(script, research) + validate_script_relevance(script, topic) + validate_narrative_structure(script.narration)
+            issues = validate_script_grounding(script, research) + validate_narrative_structure(script.narration)
+            issues += validate_script_relevance(script, topic)
+            issues += validate_script_originality(script, selected_references)
             issues += validate_image_cues(script.image_cues)
             if script.word_count > genre.word_count_max:
                 issues.append(f"script narration too long after repair: {script.word_count} > {genre.word_count_max}")
@@ -117,13 +173,14 @@ def script_from_mapping(
         for item in data.get("sfx_cues", data.get("sound_effects", []))
         if isinstance(item, dict)
     ]
-    narration = " ".join(str(data.get("narration") or "").split())
+    narration = _clean_tts_quote_artifacts(str(data.get("narration") or ""))
+    hook_line = _clean_tts_quote_artifacts(str(data.get("hook_line") or _first_sentence(narration)))
     subject_lock = infer_subject_lock(topic or str(data.get("title") or ""), research)
     cues = apply_subject_lock_to_cues(cues, subject_lock)
     return ScriptOutput(
         title=str(data.get("title") or "Untitled Short")[:60],
         narration=narration,
-        hook_line=str(data.get("hook_line") or _first_sentence(narration)),
+        hook_line=hook_line,
         word_count=len(_words(narration)),
         estimated_duration=int(data.get("estimated_duration") or 45),
         description=str(data.get("description") or ""),
@@ -277,17 +334,17 @@ def validate_script_relevance(script: ScriptOutput, topic: str) -> list[str]:
     if not subject_lock.enabled:
         topic_terms = _topic_relevance_terms(topic)
         if topic_terms:
-            matches = sum(1 for term in topic_terms if term in haystack)
-            required = 1 if len(topic_terms) == 1 else min(2, len(topic_terms))
+            matches = sum(1 for term in topic_terms if _term_in_text(term, haystack))
+            required = _required_topic_matches(topic_terms)
             if matches < required:
                 return [f"script ignored the requested topic; expected terms like: {', '.join(topic_terms[:4])}"]
         if any(marker in haystack for marker in generic_markers):
             return ["script used generic fallback boilerplate; rewrite around the actual user request"]
         return []
     subjects = [subject_lock.subject, *subject_lock.aliases]
-    subject_present = any(str(subject).lower() in haystack for subject in subjects if str(subject).strip())
+    subject_present = any(_term_in_text(str(subject), haystack) for subject in subjects if str(subject).strip())
     terms = _subject_terms(subject_lock.subject)
-    if subject_present or (terms and all(term in haystack for term in terms[:2])):
+    if subject_present or (terms and all(_term_in_text(term, haystack) for term in terms[:2])):
         subject_present = True
     else:
         subject_present = False
@@ -306,6 +363,66 @@ def validate_script_relevance(script: ScriptOutput, topic: str) -> list[str]:
     return []
 
 
+def validate_script_originality(script: ScriptOutput, reference_scripts: list[dict[str, Any]]) -> list[str]:
+    narration = script.narration
+    reference_texts = [str(item.get("script") or item.get("full_script") or "") for item in reference_scripts]
+    for reference in reference_texts:
+        if not reference.strip():
+            continue
+        if _has_copied_sentence(narration, reference) or _shingle_overlap_ratio(narration, reference) >= 0.62:
+            return [
+                "script copies too much wording or structure from a reference/example; rewrite with a fresh angle and original phrasing"
+            ]
+    for example in _few_shot_narrations():
+        if _has_copied_sentence(narration, example):
+            return [
+                "script copies too much wording or structure from a reference/example; rewrite with a fresh angle and original phrasing"
+            ]
+    return []
+
+
+def validate_script_subjective_with_llm(
+    provider,
+    script: ScriptOutput,
+    topic: str,
+    reference_scripts: list[dict[str, Any]],
+) -> list[str]:
+    try:
+        payload = {
+            "raw_request": topic,
+            "script": {
+                "title": script.title,
+                "narration": script.narration,
+                "description": script.description,
+                "hashtags": script.hashtags,
+            },
+            "reference_scripts": [
+                {
+                    "title": str(item.get("title") or "")[:120],
+                    "script": str(item.get("script") or item.get("full_script") or "")[:900],
+                }
+                for item in reference_scripts[:4]
+            ],
+            "checks": [
+                "topic relevance after alias/date normalization",
+                "copying from references/examples",
+            ],
+        }
+        data = provider.generate_json(
+            SCRIPT_VALIDATION_SYSTEM_PROMPT,
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            SCRIPT_VALIDATION_MAX_OUTPUT_TOKENS,
+        )
+        if not isinstance(data, dict) or "passed" not in data:
+            raise ValueError("script validation LLM returned an unexpected shape")
+        if bool(data.get("passed")):
+            return []
+        issues = [str(item).strip() for item in data.get("issues", []) if str(item).strip()]
+        return issues or ["script failed LLM relevance/originality validation"]
+    except Exception:
+        return validate_script_originality(script, reference_scripts)
+
+
 def validate_image_cues(cues: list[ImageCue]) -> list[str]:
     issues: list[str] = []
     if len(cues) < 5:
@@ -319,7 +436,54 @@ def validate_image_cues(cues: list[ImageCue]) -> list[str]:
     return issues
 
 
+def _few_shot_narrations() -> list[str]:
+    narrations = []
+    for raw in (EXAMPLE_ASSISTANT_OUTPUT_1, EXAMPLE_ASSISTANT_OUTPUT_2):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        narration = str(data.get("narration") or "")
+        if narration:
+            narrations.append(narration)
+    return narrations
+
+
+def _has_copied_sentence(narration: str, reference: str) -> bool:
+    narration_norm = _normalized_words_text(narration)
+    for sentence in _script_sentences(reference):
+        words = _words(sentence)
+        if len(words) < 12:
+            continue
+        if _normalized_words_text(sentence) in narration_norm:
+            return True
+    return False
+
+
+def _shingle_overlap_ratio(narration: str, reference: str, size: int = 8) -> float:
+    narration_shingles = _word_shingles(narration, size)
+    reference_shingles = _word_shingles(reference, size)
+    if not narration_shingles or not reference_shingles:
+        return 0.0
+    shared = narration_shingles.intersection(reference_shingles)
+    if len(shared) < 14:
+        return 0.0
+    return len(shared) / max(1, min(len(narration_shingles), len(reference_shingles)))
+
+
+def _word_shingles(text: str, size: int) -> set[tuple[str, ...]]:
+    words = [word.lower() for word in _words(text)]
+    if len(words) < size:
+        return set()
+    return {tuple(words[index : index + size]) for index in range(0, len(words) - size + 1)}
+
+
+def _normalized_words_text(text: str) -> str:
+    return " ".join(word.lower() for word in _words(text))
+
+
 def _repair_script(script: ScriptOutput, genre: GenreConfig, research: dict[str, Any]) -> ScriptOutput:
+    script.narration = _clean_tts_quote_artifacts(script.narration)
     script.narration = polish_script_ending(script.narration, genre.genre_id)
     script.word_count = len(_words(script.narration))
     script.narration = _ground_script_if_needed(script.narration, genre, research)
@@ -328,6 +492,7 @@ def _repair_script(script: ScriptOutput, genre: GenreConfig, research: dict[str,
     script.word_count = len(_words(script.narration))
     script.narration = _trim_to_max_words(script.narration, genre)
     script.word_count = len(_words(script.narration))
+    script.hook_line = _clean_tts_quote_artifacts(script.hook_line)
     if not script.hook_line or script.hook_line not in script.narration:
         script.hook_line = _first_sentence(script.narration)
     while len(script.image_cues) < 5:
@@ -348,6 +513,21 @@ def _repair_script(script: ScriptOutput, genre: GenreConfig, research: dict[str,
         else:
             script.image_cues.append(ImageCue(keyword=_fallback_visual_keyword(script, len(script.image_cues)), timestamp_hint=f"word_{len(script.image_cues) * 15}", mood="neutral"))
     return script
+
+
+def _clean_tts_quote_artifacts(text: str) -> str:
+    cleaned = (
+        str(text or "")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+    cleaned = re.sub(r"\s*(['\"])\s*\1\s*", " ", cleaned)
+    cleaned = re.sub(r"(?<![A-Za-z0-9])'([^'\n]{2,90})'(?![A-Za-z0-9])", r"\1", cleaned)
+    cleaned = re.sub(r'(?<![A-Za-z0-9])"([^"\n]{2,90})"(?![A-Za-z0-9])', r"\1", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return " ".join(cleaned.split())
 
 
 def _trim_to_max_words(narration: str, genre: GenreConfig) -> str:
@@ -405,28 +585,7 @@ def _ground_script_if_needed(narration: str, genre: GenreConfig, research: dict[
         return narration
     if any(_anchor_in_text(anchor, narration.lower()) for anchor in anchors):
         return narration
-
-    anchor = anchors[0]
-    sentence = _anchor_sentence(anchor)
-    if len(_words(narration)) + len(_words(sentence)) <= genre.word_count_max:
-        sentences = _script_sentences(narration)
-        if sentences:
-            return " ".join([sentences[0], sentence, *sentences[1:]])
-        return f"{sentence} {narration}".strip()
-
-    sentences = _script_sentences(narration)
-    if len(sentences) >= 2:
-        candidate_sentences = list(sentences)
-        candidate_sentences[1] = sentence
-        candidate = " ".join(candidate_sentences)
-        if len(_words(candidate)) <= genre.word_count_max:
-            return candidate
-
     return narration
-
-
-def _anchor_sentence(anchor: str) -> str:
-    return f"One real anchor here is {anchor.strip()}."
 
 
 def _compact_research(growth_context: GrowthContext | dict[str, Any] | None) -> dict[str, Any]:
@@ -479,10 +638,19 @@ def _filter_research_for_topic(research: dict[str, Any], topic: str) -> dict[str
         "selected_topic": selected_topic if relevant_text(selected_topic) else "",
         "selected_angle": selected_angle if relevant_text(selected_angle) else "",
         "grounding_plan": research.get("grounding_plan", {}),
-        "brief": brief if relevant_text(brief) else "",
+        "brief": _sanitize_research_brief(brief, topic) if relevant_text(brief) else "",
         "facts": facts[:6],
         "source_snippets": source_snippets[:5],
     }
+
+
+def _sanitize_research_brief(brief: str, topic: str) -> str:
+    text = " ".join(str(brief or "").split())
+    subject_lock = infer_subject_lock(topic)
+    if subject_lock.enabled:
+        text = re.sub(r"Selected angle:\s*[^.]+\.?\s*", "", text, flags=re.I)
+        text = re.sub(r"(Topic:\s*[^.\n]+?)\s+-\s+[^.\n]+(\.)", r"\1\2", text)
+    return text[:900]
 
 
 def _safe_user_payload_json(payload: dict[str, Any]) -> str:
@@ -521,6 +689,7 @@ def _safe_user_payload_json(payload: dict[str, Any]) -> str:
         "duration": payload.get("duration", payload.get("duration_seconds", 30)),
         "reference_scripts": [],
         "user_notes": str(payload.get("user_notes") or "")[:200],
+        "previous_failures": [str(item)[:160] for item in list(payload.get("previous_failures") or [])[:4]],
         "research": {},
     }
     return _payload_json(minimal)
@@ -726,6 +895,14 @@ def _retry_note(attempt: int, last_error: str) -> str:
     )
 
 
+def _should_include_prompt_examples(topic: str, previous_failures: list[str], attempt: int = 1) -> bool:
+    if attempt > 1 or previous_failures:
+        return False
+    if infer_subject_lock(topic).enabled:
+        return False
+    return True
+
+
 def _words(text: str) -> list[str]:
     return [w for w in text.split() if w.strip()]
 
@@ -744,6 +921,13 @@ def _keywords(text: str) -> list[str]:
         "their",
         "about",
         "because",
+        "want",
+        "minute",
+        "minutes",
+        "movie",
+        "next",
+        "hero",
+        "greatness",
         "make",
         "video",
         "short",
@@ -756,14 +940,45 @@ def _keywords(text: str) -> list[str]:
 
 
 def _topic_relevance_terms(topic: str) -> list[str]:
-    terms = _keywords(topic)
+    topic_lower = str(topic or "").lower()
+    terms: list[str] = []
+    if re.search(r"\bspider[\s-]?man\b|\bspiderman\b", topic_lower):
+        terms.append("spiderman")
+    if re.search(r"\bbrand\s+new\s+day\b", topic_lower):
+        terms.append("brandnewday")
+    terms.extend(_keywords(topic))
     normalized = []
     for term in terms:
         if term == "daemons":
             term = "demons"
+        if term in {"spider", "man"} and "spiderman" in normalized:
+            continue
+        if term in {"brand", "new", "day"} and "brandnewday" in normalized:
+            continue
         if term not in normalized:
             normalized.append(term)
     return normalized[:8]
+
+
+def _term_in_text(term: str, text: str) -> bool:
+    term = str(term or "").lower().strip()
+    if not term:
+        return False
+    if term in text:
+        return True
+    compact_term = re.sub(r"[^a-z0-9]+", "", term)
+    if not compact_term:
+        return False
+    compact_text = re.sub(r"[^a-z0-9]+", "", text.lower())
+    return compact_term in compact_text
+
+
+def _required_topic_matches(topic_terms: list[str]) -> int:
+    if len(topic_terms) <= 1:
+        return 1
+    if any(term in {"spiderman", "brandnewday"} for term in topic_terms):
+        return 1
+    return min(2, len(topic_terms))
 
 
 def _subject_terms(text: str) -> list[str]:

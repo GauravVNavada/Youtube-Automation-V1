@@ -16,8 +16,8 @@ from modules.audio.timing import evenly_spaced_word_timestamps
 from modules.audio.tts import estimate_duration_ms
 
 
-INITIAL_AUDIO_SILENCE_MS = 220
-SENTENCE_AUDIO_GAP_MS = 180
+INITIAL_AUDIO_SILENCE_MS = 0
+SENTENCE_AUDIO_GAP_MS = 0
 
 
 class AudioAgent(BaseAgent):
@@ -33,20 +33,22 @@ class AudioAgent(BaseAgent):
         voice_speed_multiplier: float = 1.0,
     ) -> AudioBundle:
         provider = "google_tts" if google_tts_credentials else "edge_tts"
-        effective_voice_rate = max(0.5, min(1.6, genre.voice_rate * voice_speed_multiplier))
+        explicit_voice_speed = abs(float(voice_speed_multiplier or 1.0) - 1.0) > 0.001
+        timing_voice_rate = max(0.65, min(1.4, float(voice_speed_multiplier or 1.0)))
+        tts_speaking_rate = timing_voice_rate if explicit_voice_speed else None
         payload = {
             "word_count": word_count,
             "duration": duration,
             "genre_id": genre.genre_id,
             "genre_voice_rate": genre.voice_rate,
             "voice_speed_multiplier": voice_speed_multiplier,
-            "effective_voice_rate": effective_voice_rate,
+            "tts_speaking_rate": tts_speaking_rate if tts_speaking_rate is not None else "provider_default",
             "provider_order": ["google_tts", "edge_tts", "tone_fallback"],
             "has_google_tts_credentials": bool(google_tts_credentials),
         }
         self.log_input(payload)
         audio_dir = self.run_dir / "intermediate" / "audio"
-        duration_ms = estimate_duration_ms(word_count, duration, effective_voice_rate)
+        duration_ms = estimate_duration_ms(word_count, duration, timing_voice_rate)
         narration_path = audio_dir / "narration.wav"
         final_path = audio_dir / "final_audio.wav"
         audio_dir.mkdir(parents=True, exist_ok=True)
@@ -58,14 +60,14 @@ class AudioAgent(BaseAgent):
                     narration,
                     narration_path,
                     google_tts_credentials,
-                    speaking_rate=effective_voice_rate,
+                    speaking_rate=tts_speaking_rate,
                 )
                 provider = "google_tts"
             except Exception as exc:
                 self.event("Google TTS failed; trying Edge TTS", reason=str(exc), duration_ms=duration_ms)
-                provider, narration_path = self._try_edge_tts(narration, audio_dir, effective_voice_rate, duration_ms)
+                provider, narration_path = self._try_edge_tts(narration, audio_dir, tts_speaking_rate, duration_ms)
         else:
-            provider, narration_path = self._try_edge_tts(narration, audio_dir, effective_voice_rate, duration_ms)
+            provider, narration_path = self._try_edge_tts(narration, audio_dir, tts_speaking_rate, duration_ms)
 
         raw_duration_ms = probe_audio_duration_ms(narration_path) or duration_ms
         if provider in {"google_tts", "edge_tts"}:
@@ -134,7 +136,7 @@ class AudioAgent(BaseAgent):
         self,
         narration: str,
         audio_dir: Path,
-        speaking_rate: float,
+        speaking_rate: float | None,
         duration_ms: int,
     ) -> tuple[str, Path]:
         edge_path = audio_dir / "narration_edge.mp3"

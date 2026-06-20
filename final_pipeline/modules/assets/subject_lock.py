@@ -55,12 +55,20 @@ ENTITY_STOP_WORDS = {
     "before",
     "for",
     "first",
+    "give",
     "here",
     "how",
+    "i",
+    "in",
     "it",
     "make",
+    "me",
+    "minute",
+    "minutes",
     "normal",
+    "on",
     "one",
+    "please",
     "real",
     "report",
     "short",
@@ -72,10 +80,19 @@ ENTITY_STOP_WORDS = {
     "the",
     "this",
     "video",
+    "want",
     "why",
 }
 
 KNOWN_ENTITY_PHRASES = (
+    "black knight dane whitman",
+    "doctor strange",
+    "stephen strange",
+    "spider-man",
+    "spider man",
+    "spiderman",
+    "dane whitman",
+    "black knight",
     "thor",
     "iron man",
     "tony stark",
@@ -214,6 +231,14 @@ def _title_known_entity(phrase: str) -> str:
     special = {
         "iphone 16": "iPhone 16",
         "chandrayaan-3": "Chandrayaan-3",
+        "spider-man": "Spider-Man",
+        "spider man": "Spider-Man",
+        "spiderman": "Spider-Man",
+        "doctor strange": "Doctor Strange",
+        "stephen strange": "Stephen Strange",
+        "black knight dane whitman": "Black Knight Dane Whitman",
+        "dane whitman": "Dane Whitman",
+        "black knight": "Black Knight",
     }
     return special.get(phrase, " ".join(word.upper() if word in {"iit"} else word.capitalize() for word in phrase.split()))
 
@@ -238,9 +263,15 @@ def _aliases_for_subject(subject: str) -> list[str]:
         aliases.extend(["Avengers Thor", "Marvel Thor", "God of Thunder", "Mjolnir", "Avengers"])
     if "iron man" in lower:
         aliases.extend(["Tony Stark", "Avengers Iron Man", "Iron Man suit", "arc reactor"])
+    if "doctor strange" in lower or "stephen strange" in lower:
+        aliases.extend(["Stephen Strange", "Marvel Doctor Strange", "Sorcerer Supreme", "Doctor Strange Avengers"])
+    if "black knight" in lower or "dane whitman" in lower:
+        aliases.extend(["Dane Whitman", "Marvel Black Knight", "Black Knight Dane Whitman"])
+    if "spider-man" in lower or "spider man" in lower or "spiderman" in lower:
+        aliases.extend(["Spider Man", "Spiderman", "Peter Parker", "Marvel Spider-Man"])
     if "avengers" in lower:
         aliases.extend(["Marvel Avengers", "Iron Man", "Tony Stark"])
-    if any(word.lower() in {"iron", "batman", "naruto", "avengers"} for word in words):
+    if any(word.lower() in {"iron", "batman", "naruto", "avengers", "strange", "spider-man", "spider", "knight"} for word in words):
         aliases.append(f"{subject} character")
     return list(dict.fromkeys([item for item in aliases if item]))
 
@@ -253,7 +284,7 @@ def _subject_type(subject: str) -> str:
         return "event"
     if any(term in lower for term in ("taj mahal", "tower", "iim", "iit")):
         return "specific_place"
-    if any(term in lower for term in ("batman", "naruto", "iron man", "thor", "harry potter")):
+    if any(term in lower for term in ("batman", "naruto", "iron man", "thor", "harry potter", "doctor strange", "spider-man", "spider man", "black knight")):
         return "fictional_character"
     return "named_entity"
 
@@ -262,11 +293,17 @@ def _looks_generic(text: str) -> bool:
     lower = text.lower().strip()
     if lower in ENTITY_STOP_WORDS or lower in GENERIC_TOPIC_HINTS:
         return True
+    if re.fullmatch(r"\d+", lower):
+        return True
     if re.fullmatch(r"duration\s+\d+", lower) or re.fullmatch(r"\d+\s*(seconds?|secs?|s)", lower):
         return True
     if any(hint in lower for hint in GENERIC_TOPIC_HINTS):
         return True
     if lower.startswith(("how to ", "ways to ", "tips for ", "why you ", "a scary story", "scary story")):
+        return True
+    words = re.findall(r"[a-z0-9]+", lower)
+    alpha_words = [word for word in words if re.search(r"[a-z]", word)]
+    if any(word.isdigit() for word in words) and alpha_words and all(word in ENTITY_STOP_WORDS for word in alpha_words):
         return True
     return False
 

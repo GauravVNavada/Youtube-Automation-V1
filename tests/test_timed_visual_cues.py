@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,16 +15,21 @@ if str(PIPELINE) not in sys.path:
     sys.path.insert(0, str(PIPELINE))
 
 from agents.asset_agent import AssetAgent
+import agents.audio_agent as audio_module
+from agents.audio_agent import AudioAgent
+from agents.validation_agent import ValidationAgent
 from app.schemas import GenreConfig, ImageCue, ScriptOutput, TimedVisualCue, WordTimestamp
 from main import combine_topic_and_angle, duration_from_topic, strip_duration_instruction
-from modules.scripts.generator import build_user_prompt, generate_script
+from modules.scripts.generator import build_user_prompt, generate_script, script_from_mapping, validate_script_originality, validate_script_relevance
 from modules.assets.candidates import AssetCandidate
+from modules.assets.fallback_image import create_fallback_image
 from modules.assets.image_scoring import ImageResult
+from modules.assets.subject_lock import infer_subject_lock
 from modules.assets.video_services import VideoResult
 from modules.captions.ass_builder import build_ass
 from modules.audio.alignment import _map_whisper_timestamps_to_script
 from modules.audio.humanizer import _build_excess_pause_cuts
-from modules.render.ffmpeg_builder import build_media_timeline_command
+from modules.render.ffmpeg_builder import build_image_slideshow_command, build_media_timeline_command
 from modules.visuals.timed_cues import generate_timed_visual_cues, merge_caption_phrases_for_visuals
 
 
@@ -76,6 +83,28 @@ class FakeGeminiProvider:
 
     def generate_json(self, *_args):
         return self.payload
+
+
+class SequenceGeminiProvider:
+    name = "gemini"
+
+    def __init__(self, payloads: list[dict]):
+        self.payloads = list(payloads)
+
+    def generate_json(self, *_args):
+        if not self.payloads:
+            raise AssertionError("No fake Gemini payloads left")
+        return self.payloads.pop(0)
+
+
+class CapturingSequenceGeminiProvider(SequenceGeminiProvider):
+    def __init__(self, payloads: list[dict]):
+        super().__init__(payloads)
+        self.prompts: list[str] = []
+
+    def generate_json(self, _system, prompt, *_args):
+        self.prompts.append(prompt)
+        return super().generate_json(_system, prompt, *_args)
 
 
 def _script_payload(title: str, narration: str, image_base: str) -> dict:
@@ -156,6 +185,61 @@ class TimedVisualCueTests(unittest.TestCase):
 
         self.assertEqual(cuts, [(2550, 3000)])
 
+    def test_audio_agent_uses_default_tts_speed_until_user_changes_it(self) -> None:
+        captured_rates = []
+
+        def fake_google_tts(_text, output_path, _credentials, speaking_rate=None):
+            captured_rates.append(speaking_rate)
+            Path(output_path).write_bytes(b"fake wav")
+            return str(output_path)
+
+        def fake_copy(_source, target):
+            Path(target).write_bytes(b"fake wav")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch("agents.audio_agent.synthesize_google_tts", side_effect=fake_google_tts),
+                patch("agents.audio_agent.probe_audio_duration_ms", return_value=10000),
+                patch("agents.audio_agent.AudioAgent._word_timestamps", return_value=([WordTimestamp("Hello", 0, 400)], "estimated")),
+                patch("agents.audio_agent._convert_or_copy_audio", side_effect=fake_copy),
+                patch("agents.audio_agent._insert_sentence_gaps", return_value=(0, [WordTimestamp("Hello", 0, 400)])),
+                patch("agents.audio_agent._prepend_silence", return_value=False),
+                patch("agents.audio_agent.analyze_audio_quality", return_value=SimpleNamespace(mean_volume_db=-20.0, max_volume_db=-3.0, longest_silence_seconds=0.0)),
+            ):
+                AudioAgent(Path(tmp)).run("Hello world.", 2, 60, _genre(), google_tts_credentials="/tmp/google.json")
+                AudioAgent(Path(tmp)).run("Hello world.", 2, 60, _genre(), google_tts_credentials="/tmp/google.json", voice_speed_multiplier=0.88)
+
+        self.assertEqual(captured_rates, [None, 0.88])
+
+    def test_audio_agent_does_not_add_default_synthetic_pauses(self) -> None:
+        self.assertEqual(audio_module.INITIAL_AUDIO_SILENCE_MS, 0)
+        self.assertEqual(audio_module.SENTENCE_AUDIO_GAP_MS, 0)
+
+    def test_script_mapping_cleans_tts_quote_artifacts(self) -> None:
+        script = script_from_mapping(
+            {
+                "title": "Spider-Man Brand New Day",
+                "narration": "This starts with '' a broken beat. But 'Brand New Day' isn't just a label. It says \"Peter changes\" now.",
+                "hook_line": "This starts with '' a broken beat.",
+                "image_cues": [
+                    {"keyword": "Spider-Man comic city action", "timestamp_hint": "word_0"},
+                    {"keyword": "Spider-Man city skyline comic", "timestamp_hint": "word_12"},
+                    {"keyword": "Spider-Man mask close up", "timestamp_hint": "word_24"},
+                    {"keyword": "Spider-Man comic cover table", "timestamp_hint": "word_36"},
+                    {"keyword": "Spider-Man final swing city", "timestamp_hint": "word_48"},
+                ],
+            },
+            provider="test",
+            topic="spider man brand new day",
+        )
+
+        self.assertNotIn("''", script.narration)
+        self.assertNotIn("'Brand New Day'", script.narration)
+        self.assertNotIn('"Peter changes"', script.narration)
+        self.assertIn("Brand New Day", script.narration)
+        self.assertIn("isn't", script.narration)
+        self.assertEqual(script.hook_line, "This starts with a broken beat.")
+
     def test_caption_chunks_merge_into_non_overlapping_visual_windows(self) -> None:
         words = [
             WordTimestamp("First", 0, 300),
@@ -210,6 +294,47 @@ class TimedVisualCueTests(unittest.TestCase):
         self.assertIn("Avengers", script.narration)
         self.assertNotIn("normal short video idea", script.narration)
 
+    def test_validation_agent_accepts_normalized_spider_man_date_topic(self) -> None:
+        narration = (
+            "Spider-Man felt different at the start of 2020 because the hero was being pulled in two directions. "
+            "On one side, fans wanted the familiar mask, the jokes, and the city swinging above traffic. "
+            "On the other side, the story needed a reason to feel new. "
+            "But the date should not become the hero; it should become the pressure around him. "
+            "That is why the January angle works for a short. "
+            "It gives the video a clear moment in time without pretending the date is the entire subject. "
+            "The point is simple: Spider-Man lasts because every new chapter can change the pressure while keeping the responsibility."
+        )
+        provider = SequenceGeminiProvider(
+            [
+                _script_payload("Spider-Man In January 2020", narration, "Spider-Man comic city"),
+                {"passed": True, "issues": []},
+            ]
+        )
+        script = generate_script(
+            provider,
+            "spider man january 2020",
+            _genre(),
+            45,
+            [
+                {
+                    "title": "Comic Hero Choice",
+                    "script": "The strongest hero in the panel is not always the one throwing the punch. Start with the city falling apart behind them.",
+                    "overall_score": 99,
+                }
+            ],
+        )
+        self.assertEqual(script.provider, "gemini")
+        self.assertIn("Spider-Man", script.narration)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ValidationAgent(Path(tmp)).validate_script_output(
+                script,
+                _genre(),
+                provider=provider,
+                topic="spider man january 2020",
+                reference_scripts=[],
+            )
+        self.assertTrue(result.passed)
+
     def test_duration_strip_removes_keep_duration_clause(self) -> None:
         prompt = "make a video on a school hallway where there is a guy running from daemons, keep duration for 30 seconds"
         cleaned = strip_duration_instruction(prompt)
@@ -222,6 +347,11 @@ class TimedVisualCueTests(unittest.TestCase):
         self.assertEqual(
             combine_topic_and_angle(topic, "school hallway locked exit chase"),
             f"{topic} - school hallway locked exit chase",
+        )
+        doctor_topic = "make a video speaking on different powers of doctor strange(avengers hero)"
+        self.assertEqual(
+            combine_topic_and_angle(doctor_topic, f"{doctor_topic} - black knight dane whitman"),
+            doctor_topic,
         )
 
     def test_script_prompt_keeps_final_user_json_valid_under_large_context(self) -> None:
@@ -288,6 +418,150 @@ class TimedVisualCueTests(unittest.TestCase):
         self.assertTrue(cues)
         self.assertTrue(all(cue.required_subjects == ["Thor"] for cue in cues))
         self.assertTrue(all(cue.required_subjects != ["At"] for cue in cues))
+
+    def test_instruction_fragment_with_number_is_not_named_subject(self) -> None:
+        lock = infer_subject_lock("i want a 1 minute short about a comic hero choice")
+        self.assertFalse(lock.enabled)
+
+    def test_doctor_strange_subject_lock_wins_over_avengers_context(self) -> None:
+        lock = infer_subject_lock("make a video speaking on different powers of doctor strange(avengers hero)")
+        self.assertTrue(lock.enabled)
+        self.assertEqual(lock.subject, "Doctor Strange")
+        self.assertIn("Stephen Strange", lock.aliases)
+
+    def test_named_subject_prompt_retries_without_copying_few_shot_example(self) -> None:
+        copied_mirror = {
+            "title": "The Scratches Behind The Mirror",
+            "narration": (
+                "Maya first heard the scratching at 2:13 a.m. It came from the bathroom mirror, slow and careful, like a nail dragging across glass. "
+                "She checked the sink, the wall, even the cabinet behind it. Nothing was there. Then the scratching stopped. "
+                "A foggy line appeared on the mirror from the inside. It wrote one word: move. Maya stepped back. "
+                "A second later, the mirror cracked outward, and a rusted screw fell into the sink. The mirror was not haunted. "
+                "Someone had been loosening it from the other side."
+            ),
+            "hook_line": "Maya first heard the scratching at 2:13 a.m.",
+            "word_count": 81,
+            "estimated_duration": 30,
+            "description": "A short horror story about a mirror.",
+            "hashtags": ["#shorts", "#horror"],
+            "image_cues": [
+                {"keyword": "dark bathroom mirror night", "timestamp_hint": "word_0", "mood": "dark"},
+                {"keyword": "scratched glass closeup", "timestamp_hint": "word_12", "mood": "eerie"},
+                {"keyword": "woman checking bathroom cabinet", "timestamp_hint": "word_28", "mood": "dark"},
+                {"keyword": "foggy mirror written word", "timestamp_hint": "word_43", "mood": "reveal"},
+                {"keyword": "cracked mirror bathroom sink", "timestamp_hint": "word_61", "mood": "dramatic"},
+            ],
+            "sfx_cues": [],
+            "emphasis_words": [],
+        }
+        good_narration = (
+            "Doctor Strange is dangerous because his powers are choices, not just glowing tricks. "
+            "First, portals let him turn distance into a weapon, moving allies or enemies in one blink. "
+            "Then his shields buy time when a fight should already be lost. "
+            "But the wild part is the mirror dimension, where the battlefield itself can bend around him. "
+            "Add astral projection, spell knowledge, and quick thinking, and the point becomes clear. "
+            "Doctor Strange wins when he controls the rules of the scene."
+        )
+        provider = CapturingSequenceGeminiProvider(
+            [
+                copied_mirror,
+                _script_payload("Doctor Strange Power Rules", good_narration, "Doctor Strange magic portal"),
+            ]
+        )
+
+        script = generate_script(
+            provider,
+            "make a video speaking on different powers of doctor strange(avengers hero)",
+            _genre(),
+            60,
+            [],
+        )
+
+        self.assertIn("Doctor Strange", script.narration)
+        self.assertNotIn("One real anchor here is", script.narration)
+        self.assertEqual(len(provider.prompts), 2)
+        self.assertNotIn("The Scratches Behind The Mirror", "\n".join(provider.prompts))
+
+    def test_script_relevance_accepts_spider_man_hyphenation(self) -> None:
+        script = ScriptOutput(
+            title="Spider-Man Brand New Day",
+            narration="Spider-Man faces a Brand New Day with new pressure and responsibility.",
+            hook_line="Spider-Man faces a Brand New Day with new pressure and responsibility.",
+            word_count=11,
+            estimated_duration=30,
+            description="A comic short about Spider-Man and Brand New Day.",
+            hashtags=[],
+            image_cues=[],
+            sfx_cues=[],
+        )
+        issues = validate_script_relevance(script, "video on spiderman brand new day, his next new movie")
+        self.assertEqual(issues, [])
+
+    def test_script_relevance_does_not_require_weak_topic_words(self) -> None:
+        script = ScriptOutput(
+            title="Why Spider-Man Still Works",
+            narration="Spider-Man works because power never removes his everyday pressure.",
+            hook_line="Spider-Man works because power never removes his everyday pressure.",
+            word_count=9,
+            estimated_duration=30,
+            description="A comic short about Spider-Man.",
+            hashtags=[],
+            image_cues=[],
+            sfx_cues=[],
+        )
+        issues = validate_script_relevance(script, "video on spiderman brand new day, his next new movie")
+        self.assertEqual(issues, [])
+
+    def test_script_originality_rejects_copied_reference_script(self) -> None:
+        copied = (
+            "The strongest hero in the panel is not always the one throwing the punch. "
+            "Start with the city falling apart behind them. "
+            "A villain offers the easy win: save one person, abandon the rest, and walk away called a hero. "
+            "That is where the comic gets interesting."
+        )
+        script = ScriptOutput(
+            title="Copied Comic Beat",
+            narration=copied,
+            hook_line="The strongest hero in the panel is not always the one throwing the punch.",
+            word_count=35,
+            estimated_duration=30,
+            description="",
+            hashtags=[],
+            image_cues=[],
+            sfx_cues=[],
+        )
+        issues = validate_script_originality(script, [{"title": "Comic Hero Choice", "script": copied}])
+        self.assertTrue(issues)
+        self.assertIn("copies too much", issues[0])
+
+    def test_script_originality_allows_fresh_script_with_same_genre_shape(self) -> None:
+        reference = (
+            "The strongest hero in the panel is not always the one throwing the punch. "
+            "Start with the city falling apart behind them. "
+            "A villain offers the easy win: save one person, abandon the rest, and walk away called a hero. "
+            "That is where the comic gets interesting. "
+            "The costume matters less than the choice."
+        )
+        fresh = (
+            "Spider-Man works because the mask never makes the choice simple. "
+            "Start with Peter hearing two alarms at once: one from the city, one from home. "
+            "The villain wants him to chase the loud disaster while someone smaller gets forgotten. "
+            "That pressure is the real comic-book engine. "
+            "The final swing matters because he chooses responsibility when nobody is clapping."
+        )
+        script = ScriptOutput(
+            title="Why Spider-Man Still Works",
+            narration=fresh,
+            hook_line="Spider-Man works because the mask never makes the choice simple.",
+            word_count=len(fresh.split()),
+            estimated_duration=30,
+            description="",
+            hashtags=[],
+            image_cues=[],
+            sfx_cues=[],
+        )
+        issues = validate_script_originality(script, [{"title": "Comic Hero Choice", "script": reference}])
+        self.assertEqual(issues, [])
 
     def test_duplicate_pexels_video_url_is_skipped(self) -> None:
         import agents.asset_agent as asset_module
@@ -440,8 +714,7 @@ class TimedVisualCueTests(unittest.TestCase):
                     return [ImageResult(url="https://images.example.com/thor.jpg", source="duckduckgo", width=1200, height=1600, description=f"{query} photo")]
 
                 def fake_download(url, target):
-                    target.write_bytes(b"fake-image")
-                    return str(target)
+                    return create_fallback_image("thor", target)
 
                 image_module.search_duckduckgo_images = fake_duck
                 image_module.download_image = fake_download
@@ -450,6 +723,33 @@ class TimedVisualCueTests(unittest.TestCase):
                 self.assertEqual(source, "duckduckgo")
                 self.assertTrue(Path(path).exists())
                 self.assertTrue(any(item.get("source") == "duckduckgo" for item in diagnostics))
+        finally:
+            image_module.search_duckduckgo_images = old_duck
+            image_module.download_image = old_download
+
+    def test_corrupt_downloaded_image_falls_back_before_render(self) -> None:
+        import modules.assets.image_fetcher as image_module
+
+        old_duck = image_module.search_duckduckgo_images
+        old_download = image_module.download_image
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                image_dir = Path(tmp)
+
+                def fake_duck(query, max_results=8):
+                    return [ImageResult(url="https://images.example.com/bad.jpg", source="duckduckgo", width=1200, height=1600, description=f"{query} photo")]
+
+                def fake_download(url, target):
+                    target.write_bytes(b"not-a-real-image")
+                    return str(target)
+
+                image_module.search_duckduckgo_images = fake_duck
+                image_module.download_image = fake_download
+                diagnostics = []
+                path, source = image_module.fetch_image_for_cue(ImageCue("bad image", "word_0"), image_dir, _genre(), diagnostics=diagnostics)
+                self.assertEqual(source, "generated_fallback")
+                self.assertTrue(Path(path).exists())
+                self.assertTrue(any(item.get("status") == "error" for item in diagnostics))
         finally:
             image_module.search_duckduckgo_images = old_duck
             image_module.download_image = old_download
@@ -466,15 +766,26 @@ class TimedVisualCueTests(unittest.TestCase):
             media_durations_ms=[2500, 3500],
         )
         joined = " ".join(cmd)
-        self.assertIn("-t 2.50", joined)
+        self.assertIn("-t 2.95", joined)
         self.assertIn("-t 3.50", joined)
         self.assertIn("zoompan=", joined)
-        self.assertIn("gblur=sigma=28", joined)
+        self.assertIn("force_original_aspect_ratio=increase:flags=lanczos", joined)
+        self.assertIn("force_original_aspect_ratio=decrease:flags=lanczos", joined)
+        self.assertIn("gblur=sigma=24", joined)
         self.assertIn("overlay=(W-w)/2:(H-h)/2", joined)
-        self.assertIn("fade=t=out", joined)
-        self.assertIn("trim=duration=2.50,setpts=PTS-STARTPTS", joined)
-        self.assertIn("concat=n=2:v=1:a=0", joined)
-        self.assertNotIn("xfade=", joined)
+        self.assertIn("trim=end_frame=1,setpts=PTS-STARTPTS[comp0]", joined)
+        self.assertIn("[comp0]zoompan=", joined)
+        self.assertIn("s=2160x3840:fps=30", joined)
+        self.assertIn("scale=1080:1920:flags=lanczos,setsar=1,format=yuv420p[v0]", joined)
+        self.assertIn("x='trunc((iw-iw/zoom)/4)*2':y='trunc((ih-ih/zoom)/4)*2'", joined)
+        self.assertNotIn("zoom+", joined)
+        self.assertNotIn("iw/2-(iw/zoom/2)", joined)
+        self.assertNotIn("fade=t=", joined)
+        self.assertIn("trim=duration=2.95,setpts=PTS-STARTPTS", joined)
+        self.assertIn("xfade=transition=slideleft:duration=0.45:offset=2.50", joined)
+        self.assertNotIn("concat=n=2:v=1:a=0", joined)
+        self.assertIn("-f image2 -loop 1 -t 2.95 -i a.jpg", joined)
+        self.assertIn("alimiter=limit=0.89", joined)
         self.assertIn("-t 6.000", joined)
 
     def test_image_timeline_segments_are_trimmed_after_zoompan(self) -> None:
@@ -490,14 +801,137 @@ class TimedVisualCueTests(unittest.TestCase):
         )
         joined = " ".join(cmd)
         self.assertEqual(joined.count("zoompan="), 3)
-        self.assertEqual(joined.count("gblur=sigma=28"), 3)
+        self.assertEqual(joined.count("force_original_aspect_ratio=increase:flags=lanczos"), 3)
+        self.assertEqual(joined.count("force_original_aspect_ratio=decrease:flags=lanczos"), 3)
+        self.assertEqual(joined.count("gblur=sigma=24"), 3)
         self.assertEqual(joined.count("overlay=(W-w)/2:(H-h)/2"), 3)
-        self.assertIn("fade=t=in:st=0", joined)
-        self.assertIn("fade=t=out", joined)
-        self.assertIn("trim=duration=2.50,setpts=PTS-STARTPTS", joined)
-        self.assertIn("trim=duration=3.50,setpts=PTS-STARTPTS", joined)
+        self.assertEqual(joined.count("trim=end_frame=1,setpts=PTS-STARTPTS[comp"), 3)
+        self.assertEqual(joined.count("xfade=transition="), 2)
+        self.assertIn("xfade=transition=slideleft:duration=0.45:offset=2.50", joined)
+        self.assertIn("xfade=transition=slideright:duration=0.45:offset=6.00", joined)
+        self.assertIn("z='min(1.2200,1+(1.2200-1)*on/87)'", joined)
+        self.assertIn("z='max(1,1.1800-(1.1800-1)*on/117)'", joined)
+        self.assertIn("x='trunc((iw-iw/zoom)/4)*2':y='trunc((ih-ih/zoom)/4)*2'", joined)
+        self.assertNotIn("zoom+", joined)
+        self.assertNotIn("iw/2-(iw/zoom/2)", joined)
+        self.assertNotIn("fade=t=", joined)
+        self.assertIn("trim=duration=2.95,setpts=PTS-STARTPTS", joined)
+        self.assertIn("trim=duration=3.95,setpts=PTS-STARTPTS", joined)
         self.assertIn("trim=duration=3.00,setpts=PTS-STARTPTS", joined)
-        self.assertIn("concat=n=3:v=1:a=0", joined)
+        self.assertNotIn("concat=n=3:v=1:a=0", joined)
+
+    def test_image_slideshow_uses_quick_slide_transitions(self) -> None:
+        cmd = build_image_slideshow_command(
+            ffmpeg="ffmpeg",
+            image_paths=["a.jpg", "b.jpg", "c.jpg"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=9.0,
+        )
+        joined = " ".join(cmd)
+        self.assertIn("xfade=transition=slideleft:duration=0.45:offset=3.00", joined)
+        self.assertIn("xfade=transition=slideright:duration=0.45:offset=6.00", joined)
+        self.assertNotIn("concat=n=3:v=1:a=0", joined)
+        self.assertNotIn("fade=t=", joined)
+
+    def test_media_timeline_without_explicit_durations_uses_quick_slide_transitions(self) -> None:
+        cmd = build_media_timeline_command(
+            ffmpeg="ffmpeg",
+            media_paths=["a.jpg", "b.jpg"],
+            media_types=["image", "image"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=6.0,
+        )
+        joined = " ".join(cmd)
+        self.assertIn("xfade=transition=slideleft:duration=0.45:offset=3.00", joined)
+        self.assertNotIn("concat=n=2:v=1:a=0", joined)
+        self.assertNotIn("fade=t=", joined)
+
+    def test_render_command_supports_centered_zoom_variants_and_transition_options(self) -> None:
+        fade_cmd = build_image_slideshow_command(
+            ffmpeg="ffmpeg",
+            image_paths=["a.jpg", "b.jpg"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=6.0,
+            visual_motion=False,
+            transition_style="fade",
+            transition_seconds=0.6,
+            zoom_variant="still",
+        )
+        fade_joined = " ".join(fade_cmd)
+        self.assertIn("zoompan=z='1':x='trunc((iw-iw/zoom)/4)*2':y='trunc((ih-ih/zoom)/4)*2'", fade_joined)
+        self.assertIn("xfade=transition=fade:duration=0.60:offset=3.00", fade_joined)
+
+        cut_cmd = build_image_slideshow_command(
+            ffmpeg="ffmpeg",
+            image_paths=["a.jpg", "b.jpg"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=6.0,
+            transition_style="cut",
+        )
+        cut_joined = " ".join(cut_cmd)
+        self.assertIn("concat=n=2:v=1:a=0", cut_joined)
+        self.assertNotIn("xfade=transition=", cut_joined)
+
+    def test_still_zoom_variants_use_frame_indexed_stable_motion(self) -> None:
+        cases = [
+            ("center_in", "z='min(1.2500,1+(1.2500-1)*on/89)'"),
+            ("center_out", "z='max(1,1.2500-(1.2500-1)*on/89)'"),
+            ("still", "z='1'"),
+        ]
+        for variant, expected in cases:
+            cmd = build_image_slideshow_command(
+                ffmpeg="ffmpeg",
+                image_paths=["a.jpg"],
+                audio_path="voice.wav",
+                ass_caption_path="captions.ass",
+                output_path="out.mp4",
+                duration_seconds=3.0,
+                zoom_variant=variant,
+            )
+            joined = " ".join(cmd)
+            self.assertIn(expected, joined)
+            self.assertIn("s=2160x3840:fps=30", joined)
+            self.assertIn("x='trunc((iw-iw/zoom)/4)*2':y='trunc((ih-ih/zoom)/4)*2'", joined)
+            self.assertNotIn("zoom+", joined)
+            self.assertNotIn("iw/2-(iw/zoom/2)", joined)
+
+        mixed_cmd = build_image_slideshow_command(
+            ffmpeg="ffmpeg",
+            image_paths=["a.jpg", "b.jpg"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=6.0,
+            zoom_variant="mixed",
+        )
+        mixed_joined = " ".join(mixed_cmd)
+        self.assertIn("z='min(1.2500,1+(1.2500-1)*on/102)'", mixed_joined)
+        self.assertIn("z='max(1,1.2500-(1.2500-1)*on/89)'", mixed_joined)
+
+    def test_render_command_keeps_narration_dominant_when_mixing_music(self) -> None:
+        cmd = build_image_slideshow_command(
+            ffmpeg="ffmpeg",
+            image_paths=["a.jpg"],
+            audio_path="voice.wav",
+            ass_caption_path="captions.ass",
+            output_path="out.mp4",
+            duration_seconds=6.0,
+            music_path=str(ROOT / "README.md"),
+            music_volume=0.9,
+        )
+        joined = " ".join(cmd)
+        self.assertIn("-f image2 -loop 1", joined)
+        self.assertIn("volume=0.8", joined)
+        self.assertIn("amix=inputs=2:duration=first:dropout_transition=0:normalize=0", joined)
+        self.assertIn("alimiter=limit=0.89", joined)
 
     def test_ass_captions_highlight_active_words_with_safe_margins(self) -> None:
         words = [

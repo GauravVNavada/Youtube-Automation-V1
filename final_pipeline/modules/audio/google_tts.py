@@ -7,7 +7,7 @@ def synthesize_google_tts(
     text: str,
     output_path: Path,
     credentials_path: str,
-    speaking_rate: float = 1.0,
+    speaking_rate: float | None = None,
 ) -> str:
     """Generate real narration with Google Cloud Text-to-Speech."""
     if not credentials_path:
@@ -27,9 +27,10 @@ def synthesize_google_tts(
         language_code="en-US",
         name="en-US-Neural2-D",
     )
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-    )
+    audio_config_kwargs = {"audio_encoding": texttospeech.AudioEncoding.LINEAR16}
+    if speaking_rate is not None:
+        audio_config_kwargs["speaking_rate"] = max(0.25, min(4.0, float(speaking_rate)))
+    audio_config = texttospeech.AudioConfig(**audio_config_kwargs)
     response = client.synthesize_speech(
         input=synthesis_input,
         voice=voice,

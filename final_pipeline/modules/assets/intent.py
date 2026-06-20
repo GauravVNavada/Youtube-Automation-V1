@@ -85,4 +85,6 @@ def _genre_defaults(genre: GenreConfig) -> list[str]:
         return ["dark", "hallway", "real", "location"]
     if genre.genre_id == "history_facts":
         return ["historic", "street", "archive", "detail"]
+    if genre.genre_id == "comics":
+        return ["comic", "hero", "panel", "city"]
     return ["person", "room", "real", "scene"]

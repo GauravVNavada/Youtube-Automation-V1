@@ -74,12 +74,15 @@ class AssetBundle:
     sfx_paths: list[str]
     music_path: Optional[str]
     sources: list[str]
+    sfx_asset_ids: list[str] = field(default_factory=list)
+    sfx_asset_names: list[str] = field(default_factory=list)
     video_paths: list[str] = field(default_factory=list)
     media_paths: list[str] = field(default_factory=list)
     media_types: list[str] = field(default_factory=list)
     stock_video_search_terms: list[str] = field(default_factory=list)
     subject_lock_issues: list[str] = field(default_factory=list)
     asset_selection_trace: list[dict[str, Any]] = field(default_factory=list)
+    sfx_selection_trace: list[dict[str, Any]] = field(default_factory=list)
     asset_trace_path: str = ""
     media_start_ms: list[int] = field(default_factory=list)
     media_end_ms: list[int] = field(default_factory=list)
@@ -109,6 +112,26 @@ class AudioBundle:
 
 
 @dataclass
+class MusicBundle:
+    input_audio_path: str
+    final_audio_path: str
+    music_path: Optional[str]
+    duration_ms: int
+    music_volume: float
+    mixed: bool
+    status: str
+    skipped_reason: str = ""
+    sfx_paths: list[str] = field(default_factory=list)
+    sfx_asset_ids: list[str] = field(default_factory=list)
+    sfx_asset_names: list[str] = field(default_factory=list)
+    sfx_timings_ms: list[int] = field(default_factory=list)
+    sfx_mixed: bool = False
+    mean_volume_db: Optional[float] = None
+    max_volume_db: Optional[float] = None
+    longest_silence_seconds: Optional[float] = None
+
+
+@dataclass
 class CaptionBundle:
     srt_path: str
     ass_path: str
@@ -129,6 +152,7 @@ class RenderResult:
 class ValidationResult:
     passed: bool
     issues: list[str] = field(default_factory=list)
+    repair_notes: list[str] = field(default_factory=list)
 
 
 @dataclass

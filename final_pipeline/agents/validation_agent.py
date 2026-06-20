@@ -13,20 +13,35 @@ from app.schemas import (
     ValidationResult,
 )
 from modules.scripts.validator import validate_script
+from modules.scripts.generator import validate_script_subjective_with_llm
 
 
 class ValidationAgent(BaseAgent):
     name = "validation_agent"
 
-    def validate_script_output(self, script: ScriptOutput, genre: GenreConfig) -> ValidationResult:
+    def validate_script_output(
+        self,
+        script: ScriptOutput,
+        genre: GenreConfig,
+        provider=None,
+        topic: str = "",
+        reference_scripts: list[dict] | None = None,
+    ) -> ValidationResult:
         payload = {
             "stage": "script",
             "word_count": script.word_count,
+            "topic": topic,
+            "reference_count": len(reference_scripts or []),
+            "uses_llm_subjective_validation": bool(provider and topic),
             "validation_max_input_chars": 3000,
             "validation_max_output_tokens": 300,
         }
         self.log_input(payload)
         result = validate_script(script, genre.word_count_min, genre.word_count_max)
+        if provider and topic:
+            result.issues.extend(validate_script_subjective_with_llm(provider, script, topic, reference_scripts or []))
+            result.passed = not result.issues
+        result.repair_notes = _repair_notes_for_stage("script", result.issues)
         self.event("Script validation complete", passed=result.passed, issues=result.issues)
         self.log_output(result)
         return result
@@ -62,7 +77,7 @@ class ValidationAgent(BaseAgent):
                     if previous_end > start_ms:
                         issues.append(f"Timed media windows overlap at index {index}")
                     previous_end = end_ms
-        return ValidationResult(passed=not issues, issues=issues)
+        return ValidationResult(passed=not issues, issues=issues, repair_notes=_repair_notes_for_stage("assets", issues))
 
     def validate_audio(self, audio: AudioBundle) -> ValidationResult:
         issues = []
@@ -84,7 +99,7 @@ class ValidationAgent(BaseAgent):
             issues.append(
                 f"Audio has a long silent gap: {audio.longest_silence_seconds:.2f}s"
             )
-        return ValidationResult(passed=not issues, issues=issues)
+        return ValidationResult(passed=not issues, issues=issues, repair_notes=_repair_notes_for_stage("audio", issues))
 
     def validate_captions(self, captions: CaptionBundle) -> ValidationResult:
         issues = []
@@ -92,7 +107,7 @@ class ValidationAgent(BaseAgent):
             issues.append("SRT captions are missing")
         if not Path(captions.ass_path).exists():
             issues.append("ASS captions are missing")
-        return ValidationResult(passed=not issues, issues=issues)
+        return ValidationResult(passed=not issues, issues=issues, repair_notes=_repair_notes_for_stage("captions", issues))
 
     def validate_render(self, result: RenderResult) -> ValidationResult:
         issues = []
@@ -104,7 +119,7 @@ class ValidationAgent(BaseAgent):
             issues.append("Final video duration must be greater than 10 seconds")
         if not has_audio_stream(result.video_path):
             issues.append("Final video is missing a playable audio stream")
-        return ValidationResult(passed=not issues, issues=issues)
+        return ValidationResult(passed=not issues, issues=issues, repair_notes=_repair_notes_for_stage("render", issues))
 
 
 def has_audio_stream(video_path: str) -> bool:
@@ -139,3 +154,17 @@ def has_audio_stream(video_path: str) -> bool:
         return False
     stream = streams[0]
     return bool(stream.get("codec_name")) and int(stream.get("channels", 0) or 0) > 0
+
+
+def _repair_notes_for_stage(stage: str, issues: list[str]) -> list[str]:
+    if not issues:
+        return []
+    joined = "; ".join(issues)
+    defaults = {
+        "script": "Regenerate the script using the validator issues as constraints. Keep the original user topic, normalize aliases naturally, and fix word count, hook, ending, and image cues.",
+        "assets": "Refetch or replace weak assets using the same script cues. Prefer usable subject-matching media and avoid missing or placeholder files.",
+        "audio": "Regenerate narration audio and timing files. Keep provider default speed unless the user explicitly requested a speed change.",
+        "captions": "Regenerate captions from the audio word timestamps and keep caption files present and ordered.",
+        "render": "Render again from the validated audio, captions, and assets, then verify output dimensions, duration, and audio stream.",
+    }
+    return [defaults.get(stage, "Regenerate the artifact using the validator issues as constraints."), f"Validator issues: {joined}"]
