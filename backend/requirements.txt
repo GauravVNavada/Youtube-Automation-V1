@@ -17,3 +17,4 @@ openai-whisper==20231117
 edge-tts==6.1.12
 numpy==1.26.4
 PyYAML==6.0.1
+razorpay==1.4.2

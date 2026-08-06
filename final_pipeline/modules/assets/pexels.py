@@ -14,13 +14,22 @@ def search_pexels_images(query: str, api_key: str, per_page: int = 8) -> list[Im
     params = urllib.parse.urlencode({"query": query, "per_page": per_page, "orientation": "portrait"})
     request = urllib.request.Request(
         f"https://api.pexels.com/v1/search?{params}",
-        headers={"Authorization": api_key},
+        headers={
+            "Authorization": api_key,
+            "Accept": "application/json",
+            "User-Agent": "DesktopApp/0.1",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=8) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 403 and "1010" in body:
+            raise RuntimeError(
+                "Pexels search blocked by Pexels/Cloudflare 1010. "
+                "This usually means the request IP, API key, or bot-protection rules were denied."
+            ) from exc
         raise RuntimeError(f"Pexels search failed: HTTP {exc.code}: {body}") from exc
     except Exception as exc:
         raise RuntimeError(f"Pexels search failed: {type(exc).__name__}: {exc}") from exc

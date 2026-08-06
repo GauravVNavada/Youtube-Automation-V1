@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import require_active_entitlement
 from app.models import Chat, GenerationFeedback, OnboardingState, User, VideoJob
 from app.schemas import FeedbackIn, FeedbackOut, GenerateVideoIn, JobOut
 from app.services.agent_contracts import build_agent_contracts
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/generate", tags=["generation"])
 @router.post("", response_model=JobOut)
 def generate_video(
     payload: GenerateVideoIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_active_entitlement),
     db: Session = Depends(get_db),
 ) -> VideoJob:
     state = _state_for(db, user)
@@ -47,7 +47,7 @@ def generate_video(
 def save_feedback(
     job_id: str,
     payload: FeedbackIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_active_entitlement),
     db: Session = Depends(get_db),
 ) -> GenerationFeedback:
     job = db.get(VideoJob, job_id)

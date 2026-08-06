@@ -40,7 +40,23 @@ INPUT_FORMAT:
   "mood": "Desired mood or style.",
   "genre": {
     "word_count_min": 90,
-    "word_count_max": 120
+    "word_count_max": 120,
+    "hook_patterns": ["Hook templates from the static genre profile."],
+    "banned_phrases": ["Phrases never to use."],
+    "script_profile": {
+      "tone": "Niche tone guidance.",
+      "pacing": "Niche pacing guidance.",
+      "sentence_style": "Sentence style guidance.",
+      "structure": {
+        "opening": "How the first 3 seconds should work.",
+        "middle": "How facts/clues should escalate.",
+        "closing": "How to pay off the video."
+      },
+      "retention": {
+        "beat_interval_seconds": 4,
+        "beats": ["open loop", "contradiction", "escalation", "payoff"]
+      }
+    }
   },
   "research": {
     "facts": ["Verified facts from research agent."],
@@ -125,6 +141,10 @@ Grounding rules:
 - If the topic is fiction, horror, mystery, or Reddit-style drama, make it believable and internally consistent.
 
 Retention rules:
+- Follow genre.script_profile.retention when provided.
+- Use genre.hook_patterns as hook inspiration, but rewrite them naturally for the exact topic.
+- Follow genre.script_profile.structure: opening, middle, and closing should all be visible in the narration.
+- Treat genre.banned_phrases as hard blocked phrases.
 - Add 1-2 alert beats in the middle.
 - Alert beats should be shocking but believable.
 - Do not make the alert beat random.

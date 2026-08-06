@@ -70,6 +70,8 @@ def main() -> int:
     parser.add_argument("--min-visual-segment-ms", type=int, default=3500, help="Minimum timed visual cue length in milliseconds")
     parser.add_argument("--style-profile-json", default="", help="Selected desktop calibration style profile")
     parser.add_argument("--agent-instructions-json", default="", help="Desktop master-agent instructions by pipeline agent")
+    parser.add_argument("--genre-config-json", default="", help="Prepared genre config supplied by the desktop backend")
+    parser.add_argument("--reference-scripts-json", default="", help="Prepared reference scripts supplied by the desktop backend")
     parser.add_argument("--resume-from-run-dir", default="", help="Parent pipeline run directory to reuse upstream artifacts from")
     parser.add_argument("--rerun-stage", default="", help="Visible stage id to rerun from when resuming parent artifacts")
     args = parser.parse_args()
@@ -78,6 +80,8 @@ def main() -> int:
     duration = duration_from_topic(source_text) or duration_from_topic(args.topic) or args.duration
     style_profile = _json_arg(args.style_profile_json)
     agent_instructions = _json_arg(args.agent_instructions_json)
+    prepared_genre = _genre_config_arg(args.genre_config_json)
+    prepared_references = _json_list_arg(args.reference_scripts_json)
     run_notes = _compose_run_notes(args.notes, style_profile, agent_instructions, args.image_count)
     visual_motion = args.visual_motion == "on"
 
@@ -103,13 +107,14 @@ def main() -> int:
         genre = run_stage(
             errors,
             stage,
-            lambda: load_genre(args.genre),
+            lambda: prepared_genre or load_genre(args.genre),
             context=context,
         )
+        genre = apply_duration_word_budget(genre, duration, voice_speed_multiplier=args.voice_speed)
         references = run_stage(
             errors,
             "load_references",
-            lambda: load_reference_scripts(args.genre),
+            lambda: prepared_references or load_reference_scripts(args.genre),
             context=context,
         )
         provider = run_stage(
@@ -201,6 +206,7 @@ def main() -> int:
                     provider=provider,
                     topic=script_topic,
                     reference_scripts=references,
+                    growth_context=growth_context,
                 ),
                 context=context,
             )
@@ -217,6 +223,7 @@ def main() -> int:
                         provider=provider,
                         topic=script_topic,
                         reference_scripts=references,
+                        growth_context=growth_context,
                     ),
                     context={"producer_stage": "script_agent", "attempt": 1, "resumed": True},
                 )
@@ -521,6 +528,43 @@ def _json_arg(value: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _json_list_arg(value: str) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _genre_config_arg(value: str) -> GenreConfig | None:
+    data = _json_arg(value)
+    if not data:
+        return None
+    try:
+        return GenreConfig(
+            genre_id=str(data.get("genre_id") or data.get("id") or ""),
+            display_name=str(data.get("display_name") or data.get("genre_id") or data.get("id") or ""),
+            word_count_min=int(data.get("word_count_min") or 80),
+            word_count_max=int(data.get("word_count_max") or 130),
+            tone=str(data.get("tone") or ""),
+            layout=str(data.get("layout") or "full_image"),
+            caption_preset=str(data.get("caption_preset") or "default"),
+            voice_rate=float(data.get("voice_rate") or 1.0),
+            music_mood=str(data.get("music_mood") or ""),
+            hook_patterns=_split_csv(data.get("hook_patterns", [])),
+            banned_phrases=_split_csv(data.get("banned_phrases", [])),
+            visual_style=_dict_value(data.get("visual_style")),
+            topic_rules=_list_of_dicts(data.get("topic_rules")),
+            script_profile=_dict_value(data.get("script_profile") or data.get("metadata_json")),
+        )
+    except Exception:
+        return None
 
 
 PIPELINE_EXECUTION_STAGES = [
@@ -911,7 +955,7 @@ def load_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
 def _load_db_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
     if os.environ.get("MODULARSHORTS_DB_REFERENCES", "1").strip().lower() in {"0", "false", "no", "off"}:
         return []
-    database_url = os.environ.get("DATABASE_URL", "").strip()
+    database_url = os.environ.get("STATIC_DATABASE_URL", os.environ.get("DATABASE_URL", "")).strip()
     if not database_url:
         return []
     try:
@@ -921,39 +965,23 @@ def _load_db_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
     query = text(
         """
         SELECT
-            rv.genre_id,
-            rv.video_url,
-            rv.channel_name,
-            rv.views,
-            rv.likes,
-            rv.comments,
-            rv.upload_date,
-            rv.duration_sec,
-            rv.title,
-            rv.description_first_line,
-            rv.hashtags,
-            rv.full_script,
-            rv.word_count,
-            rv.overall_score,
-            rv.notes,
-            sa.hook_first_sentence,
-            sa.hook_type,
-            sa.hook_emotional_trigger,
-            sa.has_twist_reveal,
-            sa.twist_line,
-            sa.ending_type,
-            sa.last_sentence,
-            sa.power_words,
-            sa.emphasis_words,
-            sa.sensory_language_used,
-            sa.retention_hook,
-            sa.likely_share_trigger,
-            sa.why_it_worked,
-            sa.what_to_improve
-        FROM reference_videos rv
-        LEFT JOIN script_analysis sa ON sa.reference_video_id = rv.id
-        WHERE rv.genre_id = :genre_id AND rv.usable_as_few_shot = true
-        ORDER BY rv.overall_score DESC, rv.views DESC, rv.id ASC
+            genre_id,
+            source_url,
+            source_label,
+            title,
+            script,
+            description,
+            tags,
+            metrics,
+            analysis,
+            facts,
+            duration_sec,
+            word_count,
+            overall_score,
+            notes
+        FROM reference_examples
+        WHERE genre_id = :genre_id AND usable_as_few_shot = true
+        ORDER BY overall_score DESC, id ASC
         LIMIT 40
         """
     )
@@ -967,37 +995,41 @@ def _load_db_reference_scripts(genre_id: str) -> list[dict[str, Any]]:
 
 
 def _reference_from_db_row(row: Any) -> dict[str, Any]:
+    metrics = row.get("metrics") or {}
+    analysis = row.get("analysis") or {}
+    script = row.get("script", "")
     return {
         "genre_id": row.get("genre_id", ""),
         "title": row.get("title", ""),
-        "source_url": row.get("video_url", ""),
-        "channel_name": row.get("channel_name", ""),
-        "views": row.get("views", 0),
-        "likes": row.get("likes", 0),
-        "comments": row.get("comments", 0),
-        "upload_date": str(row.get("upload_date") or ""),
+        "source_url": row.get("source_url", ""),
+        "channel_name": row.get("source_label", ""),
+        "views": metrics.get("views", 0) if isinstance(metrics, dict) else 0,
+        "likes": metrics.get("likes", 0) if isinstance(metrics, dict) else 0,
+        "comments": metrics.get("comments", 0) if isinstance(metrics, dict) else 0,
+        "upload_date": str(metrics.get("upload_date", "") if isinstance(metrics, dict) else ""),
         "duration_sec": row.get("duration_sec", 0),
-        "description_first_line": row.get("description_first_line", ""),
-        "hashtags": _split_csv(row.get("hashtags", "")),
-        "script": row.get("full_script", ""),
-        "full_script": row.get("full_script", ""),
+        "description_first_line": row.get("description", ""),
+        "hashtags": _split_csv(row.get("tags", [])),
+        "script": script,
+        "full_script": script,
         "word_count": row.get("word_count", 0),
         "overall_score": row.get("overall_score", 0),
         "notes": row.get("notes", ""),
-        "hook_first_sentence": row.get("hook_first_sentence", ""),
-        "hook_type": row.get("hook_type", ""),
-        "hook_emotional_trigger": row.get("hook_emotional_trigger", ""),
-        "has_twist_reveal": row.get("has_twist_reveal", False),
-        "twist_line": row.get("twist_line", ""),
-        "ending_type": row.get("ending_type", ""),
-        "last_sentence": row.get("last_sentence", ""),
-        "power_words": _split_csv(row.get("power_words", "")),
-        "emphasis_words": _split_csv(row.get("emphasis_words", "")),
-        "sensory_language_used": row.get("sensory_language_used", ""),
-        "retention_hook": row.get("retention_hook", ""),
-        "likely_share_trigger": row.get("likely_share_trigger", ""),
-        "why_it_worked": row.get("why_it_worked", ""),
-        "what_to_improve": row.get("what_to_improve", ""),
+        "facts": row.get("facts", []),
+        "hook_first_sentence": analysis.get("hook_first_sentence", "") if isinstance(analysis, dict) else "",
+        "hook_type": analysis.get("hook_type", "") if isinstance(analysis, dict) else "",
+        "hook_emotional_trigger": analysis.get("hook_emotional_trigger", "") if isinstance(analysis, dict) else "",
+        "has_twist_reveal": analysis.get("has_twist_reveal", False) if isinstance(analysis, dict) else False,
+        "twist_line": analysis.get("twist_line", "") if isinstance(analysis, dict) else "",
+        "ending_type": analysis.get("ending_type", "") if isinstance(analysis, dict) else "",
+        "last_sentence": analysis.get("last_sentence", "") if isinstance(analysis, dict) else "",
+        "power_words": _split_csv(analysis.get("power_words", "") if isinstance(analysis, dict) else ""),
+        "emphasis_words": _split_csv(analysis.get("emphasis_words", "") if isinstance(analysis, dict) else ""),
+        "sensory_language_used": analysis.get("sensory_language_used", "") if isinstance(analysis, dict) else "",
+        "retention_hook": analysis.get("retention_hook", "") if isinstance(analysis, dict) else "",
+        "likely_share_trigger": analysis.get("likely_share_trigger", "") if isinstance(analysis, dict) else "",
+        "why_it_worked": analysis.get("why_it_worked", "") if isinstance(analysis, dict) else "",
+        "what_to_improve": analysis.get("what_to_improve", "") if isinstance(analysis, dict) else "",
         "source": "database_reference",
     }
 
@@ -1017,6 +1049,15 @@ def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]
 def _split_csv(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
@@ -1030,6 +1071,21 @@ def duration_from_topic(text: str) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def apply_duration_word_budget(
+    genre: GenreConfig,
+    duration: int,
+    voice_speed_multiplier: float = 1.0,
+) -> GenreConfig:
+    """Clamp genre word ranges so short-duration requests stay short."""
+    duration = max(1, int(duration or 45))
+    voice_rate = max(0.7, min(1.35, float(genre.voice_rate or 1.0) * max(0.6, voice_speed_multiplier)))
+    max_words = max(24, int(duration * min(2.05, max(1.55, 1.9 * voice_rate))))
+    min_words = max(18, min(genre.word_count_min, int(max_words * 0.68)))
+    genre.word_count_max = max(min_words, min(genre.word_count_max, max_words))
+    genre.word_count_min = min(min_words, genre.word_count_max)
+    return genre
 
 
 def combine_topic_and_angle(topic: str, selected_topic: str) -> str:
@@ -1055,7 +1111,7 @@ def strip_duration_instruction(text: str) -> str:
     cleaned = re.sub(r"\b(?:keep|set|use)\s+(?:it\s+)?(?:for|to)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\b(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
-    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use)\b\s*$", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use|for|to|with)\b\s*$", " ", cleaned, flags=re.I)
     return " ".join(cleaned.split()).strip(" ,.;")
 
 
@@ -1107,6 +1163,9 @@ def _topic_terms_for_overlap(text: str) -> list[str]:
 
 
 def load_genre(genre_id: str) -> GenreConfig:
+    db_genre = _load_db_genre(genre_id)
+    if db_genre is not None:
+        return db_genre
     path = DATA_DIR / "genres" / f"{genre_id}.yaml"
     if not path.exists():
         raise FileNotFoundError(f"Unknown genre: {genre_id}")
@@ -1123,7 +1182,80 @@ def load_genre(genre_id: str) -> GenreConfig:
         music_mood=str(data["music_mood"]),
         hook_patterns=[str(x) for x in data.get("hook_patterns", [])],
         banned_phrases=[str(x) for x in data.get("banned_phrases", [])],
+        visual_style={},
+        topic_rules=[],
+        script_profile={},
     )
+
+
+def _load_db_genre(genre_id: str) -> GenreConfig | None:
+    if os.environ.get("MODULARSHORTS_DB_GENRES", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    database_url = os.environ.get("STATIC_DATABASE_URL", os.environ.get("DATABASE_URL", "")).strip()
+    if not database_url:
+        return None
+    try:
+        from sqlalchemy import create_engine, text
+    except Exception:
+        return None
+    try:
+        engine = create_engine(database_url, pool_pre_ping=True)
+        with engine.connect() as connection:
+            genre = connection.execute(
+                text(
+                    """
+                    SELECT id, display_name, word_count_min, word_count_max, tone, layout,
+                           caption_preset, voice_rate, music_mood, hook_patterns, banned_phrases,
+                           visual_style, topic_rules, metadata_json
+                    FROM genres
+                    WHERE id = :genre_id AND is_active = true
+                    """
+                ),
+                {"genre_id": genre_id},
+            ).mappings().first()
+            if not genre:
+                return None
+    except Exception:
+        return None
+    return GenreConfig(
+        genre_id=str(genre["id"]),
+        display_name=str(genre["display_name"]),
+        word_count_min=int(genre["word_count_min"] or 80),
+        word_count_max=int(genre["word_count_max"] or 130),
+        tone=str(genre["tone"] or ""),
+        layout=str(genre["layout"] or "full_image"),
+        caption_preset=str(genre["caption_preset"] or "default"),
+        voice_rate=float(genre["voice_rate"] or 1.0),
+        music_mood=str(genre["music_mood"] or ""),
+        hook_patterns=_split_csv(genre.get("hook_patterns", [])),
+        banned_phrases=_split_csv(genre.get("banned_phrases", [])),
+        visual_style=_dict_value(genre.get("visual_style")),
+        topic_rules=_list_of_dicts(genre.get("topic_rules")),
+        script_profile=_dict_value(genre.get("metadata_json")).get("script_profile", _dict_value(genre.get("metadata_json"))),
+    )
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip().startswith("{"):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def parse_simple_yaml(text: str) -> dict[str, Any]:

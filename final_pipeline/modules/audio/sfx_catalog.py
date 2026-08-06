@@ -291,7 +291,7 @@ def infer_sfx_entry_from_path(path: Path, *, source: str = "file_scan") -> SfxCa
 def _load_db_sfx_catalog() -> list[SfxCatalogEntry]:
     if os.environ.get("MODULARSHORTS_DB_SFX_CATALOG", "1").strip().lower() in {"0", "false", "no", "off"}:
         return []
-    database_url = os.environ.get("DATABASE_URL", "").strip()
+    database_url = os.environ.get("STATIC_DATABASE_URL", os.environ.get("DATABASE_URL", "")).strip()
     if not database_url:
         return []
     try:
@@ -301,8 +301,8 @@ def _load_db_sfx_catalog() -> list[SfxCatalogEntry]:
     query = text(
         """
         SELECT id, name, path, description, tags, aliases, use_cases, intensity, duration_ms
-        FROM sfx_assets
-        WHERE enabled = true
+        FROM static_assets
+        WHERE asset_type = 'sfx' AND enabled = true
         ORDER BY id ASC
         """
     )

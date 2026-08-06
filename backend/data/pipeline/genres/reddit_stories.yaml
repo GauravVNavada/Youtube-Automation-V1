@@ -1,15 +1,15 @@
 genre_id: reddit_stories
 display_name: Reddit Stories
-word_count_min: 80
+word_count_min: 90
 word_count_max: 145
-tone: conversational, dramatic, twist-based, first-person story
+tone: Conversational, direct, believable, and easy to follow.
 layout: full_image
 caption_preset: clean_pro
-voice_rate: 1.0
-music_mood: neutral
+voice_rate: 1.04
+music_mood: light tension
 hook_patterns:
-  - "What is the smartest way someone tested {subject}?"
-  - "I pretended not to notice. Then they exposed themselves."
+  - I thought {person} was joking until {detail}.
+  - What would you do if {problem}?
 banned_phrases:
-  - "Hey guys"
-  - "Like and subscribe"
+  - reddit user said
+  - upvote

@@ -17,6 +17,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 try:
     from app.core.config import get_settings
@@ -42,6 +43,7 @@ class PlaygroundRunCreate(BaseModel):
     llm_model: str = ""
     llm_api_key: str = ""
     parent_run_id: str = ""
+    start_new_thread: bool = False
     music_path: str = ""
     chat_history: list[dict[str, Any]] = Field(default_factory=list)
     rerun_stage_id: str = ""
@@ -258,6 +260,10 @@ def _runs_dir() -> Path:
     return _project_root() / "playground" / "data" / "runs"
 
 
+def _playground_music_upload_dir() -> Path:
+    return _runs_dir() / "_uploads" / "music"
+
+
 def _legacy_runs_dir() -> Path:
     return _project_root() / "playground" / "data" / "runs"
 
@@ -374,8 +380,74 @@ def _run_workspace(run_id: str) -> Path:
     return _runs_dir() / run_id
 
 
+def _database_module():
+    try:
+        from app.core import database
+    except ModuleNotFoundError:
+        from backend.app.core import database
+    return database
+
+
+def _models_module():
+    try:
+        from app import models
+    except ModuleNotFoundError:
+        from backend.app import models
+    return models
+
+
+def _asset_catalog():
+    try:
+        from app.services import static_asset_catalog
+    except ModuleNotFoundError:
+        from backend.app.services import static_asset_catalog
+    return static_asset_catalog
+
+
+def _static_session():
+    return _database_module().StaticSessionLocal()
+
+
+def _playground_session():
+    return _database_module().PlaygroundSessionLocal()
+
+
+def _static_genres_from_db() -> list[dict[str, Any]]:
+    try:
+        models = _models_module()
+        with _static_session() as db:
+            rows = db.scalars(
+                select(models.Genre)
+                .where(models.Genre.is_active.is_(True))
+                .order_by(models.Genre.recommended_score.desc(), models.Genre.display_name.asc())
+            ).all()
+            return [
+                {
+                    "genre_id": row.id,
+                    "display_name": row.display_name,
+                    "category": row.category,
+                    "tone": row.tone,
+                    "default_duration_sec": row.default_duration_sec,
+                    "word_count_min": row.word_count_min,
+                    "word_count_max": row.word_count_max,
+                    "music_mood": row.music_mood,
+                    "hook_patterns": row.hook_patterns or [],
+                    "banned_phrases": row.banned_phrases or [],
+                    "visual_style": row.visual_style or {},
+                    "topic_rules": row.topic_rules or [],
+                    "script_profile": (row.metadata_json or {}).get("script_profile", {}),
+                }
+                for row in rows
+            ]
+    except Exception:
+        return []
+
+
 @router.get("/genres")
 def list_genres() -> list[dict[str, Any]]:
+    db_genres = _static_genres_from_db()
+    if db_genres:
+        return db_genres
     genres_dir = _pipeline_data_dir() / "genres"
     if not genres_dir.exists():
         return []
@@ -391,6 +463,15 @@ def list_genres() -> list[dict[str, Any]]:
     return genres
 
 
+@router.get("/music")
+def list_music() -> list[dict[str, Any]]:
+    try:
+        with _static_session() as db:
+            return _asset_catalog().list_music_assets(db)
+    except Exception:
+        return []
+
+
 @router.get("/llm-options")
 def list_llm_options() -> list[dict[str, Any]]:
     settings = get_settings()
@@ -402,38 +483,44 @@ def list_llm_options() -> list[dict[str, Any]]:
 
 @router.post("/music")
 def upload_music(file: UploadFile = File(...)) -> dict[str, Any]:
-    filename = file.filename or "uploaded_music"
-    suffix = Path(filename).suffix.lower()
-    if suffix not in ALLOWED_MUSIC_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Upload an audio file: mp3, wav, m4a, aac, ogg, or flac.")
+    with _static_session() as db:
+        return _asset_catalog().upload_music_asset(db, file)
 
-    target_dir = _pipeline_data_dir() / "assets" / "music" / "uploads"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")[:60] or "music"
-    target = target_dir / f"{stem}-{uuid4().hex[:8]}{suffix}"
 
-    total = 0
-    with target.open("wb") as handle:
-        while True:
-            chunk = file.file.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_MUSIC_UPLOAD_BYTES:
-                handle.close()
-                target.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail=f"Music upload is too large. Keep it under {MAX_MUSIC_UPLOAD_MB} MB.")
-            handle.write(chunk)
+@router.delete("/music/{asset_id}")
+def delete_music(asset_id: str) -> dict[str, Any]:
+    with _static_session() as db:
+        return _asset_catalog().delete_music_asset(db, asset_id)
 
-    if total <= 0:
-        target.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="Uploaded music file is empty.")
 
+@router.get("/music/{asset_id}/file")
+def get_music_file(asset_id: str) -> FileResponse:
+    with _static_session() as db:
+        return _asset_catalog().music_file_response(db, asset_id)
+
+
+@router.post("/music/uploads")
+def upload_playground_music(file: UploadFile = File(...)) -> dict[str, Any]:
+    path, size = _save_playground_music_upload(file)
+    upload_id = path.stem
     return {
-        "filename": target.name,
-        "music_path": str(target.resolve()),
-        "size_bytes": total,
+        "id": upload_id,
+        "name": _display_stage_name(path.stem.rsplit("-", 1)[0]),
+        "filename": path.name,
+        "source": "playground_upload",
+        "music_path": str(path),
+        "url": f"/api/playground/music/uploads/{upload_id}/file",
+        "size_bytes": size,
     }
+
+
+@router.get("/music/uploads/{upload_id}/file")
+def get_playground_music_file(upload_id: str) -> FileResponse:
+    path = _playground_music_upload_path(upload_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Uploaded music not found")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @router.get("/runs")
@@ -547,7 +634,7 @@ def get_run(run_id: str) -> dict[str, Any]:
             final = _stage_by_id(db_run, "final_output")
             final["output_json"].update(_final_output_json(db_run))
             final["artifacts"] = _collect_final_artifacts(db_run)
-        return db_run
+        return _with_thread_runs(db_run)
     path = _existing_run_path(run_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Playground run not found")
@@ -574,20 +661,40 @@ def get_artifact(artifact_id: str):
 
 
 def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
-    parent = _parent_run_context(payload.parent_run_id)
+    parent = {} if payload.start_new_thread else _parent_run_context(payload.parent_run_id)
     current_settings = _current_settings_from_parent(parent, payload)
     parameter_patch, edit_like = _parameter_feedback(payload.message, current_settings)
+    should_attach_latest = (
+        not payload.start_new_thread
+        and not parent
+        and _should_attach_latest_parent(payload.message, parameter_patch, edit_like)
+    )
+    if should_attach_latest:
+        parent = _latest_run_context()
+        if parent:
+            current_settings = _current_settings_from_parent(parent, payload)
+            parameter_patch, edit_like = _parameter_feedback(payload.message, current_settings)
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="This looks like a follow-up, but no active parent run was provided. Select the previous run or start a new chat with a full video topic.",
+            )
     forced_instructions = {
         str(agent): str(text)
         for agent, text in (payload.forced_agent_instructions or {}).items()
         if str(agent).strip() and str(text).strip()
     }
     forced_target = _target_agent_for_rerun(payload.rerun_stage_id) if payload.rerun_stage_id else ""
-    is_followup = bool(parent and (forced_target or _should_use_parent_context(payload.message, parameter_patch, edit_like)))
+    is_followup = bool(
+        not payload.start_new_thread
+        and parent
+        and (forced_target or _should_use_parent_context(payload.message, parameter_patch, edit_like))
+    )
     settings_patch = dict(parameter_patch.get("settings_patch") or {}) if is_followup else {}
     manual_settings_patch = _clean_settings_patch(payload.settings_patch)
     if is_followup and manual_settings_patch:
         settings_patch.update(manual_settings_patch)
+    settings_patch.update(_settings_from_text(payload.message))
     agent_instructions = dict(parameter_patch.get("agent_instructions") or {}) if is_followup else {}
     target_agent = str(parameter_patch.get("target_agent") or "")
     if forced_target:
@@ -599,7 +706,10 @@ def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
     if not music_path and is_followup:
         music_path = _valid_music_path(str((parent.get("settings") or {}).get("music_path") or ""))
 
-    if is_followup and not settings_patch and not agent_instructions:
+    if is_followup and not target_agent:
+        target_agent = _target_agent_for_settings(settings_patch, music_path)
+
+    if is_followup and not settings_patch and not agent_instructions and not target_agent:
         target_agent = "script_agent"
         agent_instructions["script_agent"] = (
             "Apply the user's follow-up feedback to the script while preserving the original source prompt and named subject. "
@@ -629,11 +739,12 @@ def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
     ] if is_followup else []
     if target_agent:
         repair_notes.append(f"Target agent: {target_agent}")
+    rerun_stage_id = payload.rerun_stage_id if forced_target else _stage_id_for_target_agent(target_agent)
     return {
         "intent": "edit_video" if is_followup else "new_video",
         "is_followup": is_followup,
         "parent_run_id": str(parent.get("id") or "") if is_followup else "",
-        "rerun_stage_id": payload.rerun_stage_id if forced_target else "",
+        "rerun_stage_id": rerun_stage_id if is_followup else "",
         "effective_message": source_prompt,
         "source_prompt": source_prompt,
         "display_message": display_message,
@@ -645,7 +756,14 @@ def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
         "agent_instructions": agent_instructions,
         "repair_notes": repair_notes,
         "route_summary": route_summary,
+        "start_new_thread": bool(payload.start_new_thread),
     }
+
+
+def _route_parent_context(route: dict[str, Any], payload: PlaygroundRunCreate) -> dict[str, Any]:
+    if payload.start_new_thread:
+        return {}
+    return _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
 
 
 def _target_agent_for_rerun(stage_id: str) -> str:
@@ -666,6 +784,43 @@ def _target_agent_for_rerun(stage_id: str) -> str:
     if stage_id == "validation_agent":
         return "validation_agent"
     return "master_agent"
+
+
+def _stage_id_for_target_agent(target_agent: str) -> str:
+    target = str(target_agent or "").strip()
+    if target in {
+        "topic_discovery_agent",
+        "research_agent",
+        "script_agent",
+        "audio_agent",
+        "caption_agent",
+        "timed_visual_agent",
+        "asset_agent",
+        "music_agent",
+        "render_agent",
+        "thumbnail_agent",
+        "validation_agent",
+    }:
+        return target
+    return ""
+
+
+def _target_agent_for_settings(settings_patch: dict[str, Any], music_path: str = "") -> str:
+    settings = _clean_settings_patch(settings_patch)
+    keys = set(settings)
+    if "duration" in keys:
+        return "script_agent"
+    if "voice_speed" in keys:
+        return "audio_agent"
+    if "caption_words" in keys:
+        return "caption_agent"
+    if keys.intersection({"image_count", "min_visual_segment_ms"}):
+        return "timed_visual_agent"
+    if music_path or keys.intersection({"music_volume"}):
+        return "music_agent"
+    if keys.intersection({"visual_motion", "transition_style", "transition_seconds", "zoom_variant"}):
+        return "render_agent"
+    return ""
 
 
 def _stage_option_instruction(
@@ -689,6 +844,8 @@ def _stage_option_instruction(
 def _clean_settings_patch(settings_patch: dict[str, Any] | None) -> dict[str, Any]:
     source = settings_patch if isinstance(settings_patch, dict) else {}
     cleaned: dict[str, Any] = {}
+    if "duration" in source:
+        cleaned["duration"] = _safe_duration(int(_clamp_int(source.get("duration"), 30, 30, 60)))
     if "voice_speed" in source:
         cleaned["voice_speed"] = round(_clamp_float(source.get("voice_speed"), 1.0, 0.65, 1.4), 2)
     if "caption_words" in source:
@@ -753,6 +910,7 @@ def _parameter_feedback(message: str, current_settings: dict[str, Any]) -> tuple
     fallback_patch = _fallback_parameter_patch(message)
     fallback_edit_like = _looks_like_edit_text(message)
     try:
+        _ensure_pipeline_import_path()
         from desktop_pipeline.parameter_agent import looks_like_edit_request, map_parameter_request
 
         patch = map_parameter_request(message, current_settings).to_dict()
@@ -767,6 +925,17 @@ def _should_use_parent_context(message: str, parameter_patch: dict[str, Any], ed
         return True
     if _looks_like_new_video_request(message):
         return False
+    return True
+
+
+def _should_attach_latest_parent(message: str, parameter_patch: dict[str, Any], edit_like: bool) -> bool:
+    if _looks_like_new_video_request(message):
+        return False
+    if parameter_patch.get("agent_instructions") or parameter_patch.get("target_agent"):
+        return True
+    text = " ".join(str(message or "").lower().split())
+    if re.search(r"\b(?:it|this|that|same|previous|current|again)\b", text):
+        return True
     return edit_like
 
 
@@ -867,6 +1036,26 @@ def _parent_run_context(run_id: str) -> dict[str, Any]:
     return run or {}
 
 
+def _latest_run_context() -> dict[str, Any]:
+    paths = sorted(
+        (path for root in _all_runs_dirs() for path in root.glob("*.json")),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for path in paths:
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            if isinstance(run, dict) and run.get("id"):
+                return run
+        except Exception:
+            continue
+    for run in _list_runs_from_db():
+        if run.get("id"):
+            return run
+    return {}
+
+
 def _current_settings_from_parent(parent: dict[str, Any], payload: PlaygroundRunCreate) -> dict[str, Any]:
     settings = dict(DEFAULT_PLAYGROUND_SETTINGS)
     settings["duration"] = parent.get("duration") or payload.duration
@@ -887,16 +1076,94 @@ def _valid_music_path(value: str) -> str:
     if not raw:
         return ""
     path = _resolve_existing_path(Path(raw))
-    music_root = (_pipeline_data_dir() / "assets" / "music").expanduser().resolve()
+    if not path.exists():
+        try:
+            path = _asset_catalog()._resolve_catalog_path(raw)
+        except Exception:
+            pass
+    allowed_roots = [
+        (_pipeline_data_dir() / "assets" / "music").expanduser().resolve(),
+        _playground_music_upload_dir().expanduser().resolve(),
+    ]
+    for env_name in ("MODULARSHORTS_DATA_DIR", "PLAYGROUND_PIPELINE_DATA_DIR"):
+        configured = os.getenv(env_name, "").strip()
+        if configured:
+            allowed_roots.append((Path(configured).expanduser() / "assets" / "music").resolve())
+    root = _project_root()
+    allowed_roots.extend(
+        [
+            root / "backend" / "data" / "pipeline" / "assets" / "music",
+            root / "playground" / "data" / "pipeline" / "assets" / "music",
+            root / "final_pipeline" / "data" / "assets" / "music",
+        ]
+    )
+    for configured in str(os.getenv("STATIC_ASSET_EXTRA_ROOTS", "") or "").split(","):
+        raw_root = configured.strip()
+        if not raw_root:
+            continue
+        extra = Path(raw_root).expanduser()
+        allowed_roots.extend([extra, extra / "music", extra / "assets" / "music"])
+    try:
+        allowed_roots.extend(root.expanduser().resolve() for root in _asset_catalog()._asset_roots("music"))
+    except Exception:
+        pass
     if not path.exists() or not path.is_file():
         return ""
     if path.suffix.lower() not in ALLOWED_MUSIC_EXTENSIONS:
         return ""
-    try:
-        path.relative_to(music_root)
-    except ValueError:
-        return ""
-    return str(path)
+    for root in allowed_roots:
+        try:
+            path.relative_to(root.expanduser().resolve())
+            return str(path)
+        except ValueError:
+            continue
+    return ""
+
+
+def _save_playground_music_upload(file: UploadFile) -> tuple[Path, int]:
+    filename = file.filename or "playground-music"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_MUSIC_EXTENSIONS:
+        allowed = ", ".join(sorted(ext.lstrip(".") for ext in ALLOWED_MUSIC_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Upload an audio file: {allowed}.")
+
+    target_dir = _playground_music_upload_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")[:60] or "music"
+    target = target_dir / f"{stem}-{uuid4().hex[:8]}{suffix}"
+
+    total = 0
+    with target.open("wb") as handle:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MUSIC_UPLOAD_BYTES:
+                handle.close()
+                target.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail=f"Music upload is too large. Keep it under {MAX_MUSIC_UPLOAD_MB} MB.")
+            handle.write(chunk)
+
+    if total <= 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded music file is empty.")
+    return target.resolve(), total
+
+
+def _playground_music_upload_path(upload_id: str) -> Path | None:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", str(upload_id or "")):
+        return None
+    root = _playground_music_upload_dir().expanduser().resolve()
+    for path in root.glob(f"{upload_id}.*"):
+        resolved = path.resolve()
+        if resolved.is_file() and resolved.suffix.lower() in ALLOWED_MUSIC_EXTENSIONS:
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                continue
+            return resolved
+    return None
 
 
 def _source_prompt_from_parent(parent: dict[str, Any]) -> str:
@@ -988,7 +1255,7 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     route = _playground_route(payload)
     effective_message = str(route["effective_message"])
     effective_duration = int(route["effective_duration"])
-    parent_context = _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
+    parent_context = _route_parent_context(route, payload)
     effective_settings = _current_settings_from_parent(parent_context, payload)
     effective_settings.update(_clean_settings_patch(route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}))
     effective_settings["duration"] = effective_duration
@@ -1005,6 +1272,7 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
             "genre_id": genre["genre_id"],
             "notes": payload.notes,
             "parent_run_id": payload.parent_run_id,
+            "start_new_thread": payload.start_new_thread,
             "chat_history": _compact_chat_history(payload.chat_history),
         },
         output_json={
@@ -1062,10 +1330,11 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
             "duration": effective_duration,
             "raw_message": payload.message,
             "cleaned_message": effective_message,
-            "source_prompt": route.get("source_prompt", ""),
-            "parent_run_id": route.get("parent_run_id", ""),
-            "settings_patch": route.get("settings_patch", {}),
-            "settings": effective_settings,
+                "source_prompt": route.get("source_prompt", ""),
+                "parent_run_id": route.get("parent_run_id", ""),
+                "rerun_stage_id": route.get("rerun_stage_id", ""),
+                "settings_patch": route.get("settings_patch", {}),
+                "settings": effective_settings,
             "music_path": route.get("music_path", ""),
             "agent_instructions": route.get("agent_instructions", {}),
             "selected_provider": payload.llm_provider,
@@ -1081,6 +1350,7 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
         "source_prompt": str(route.get("source_prompt") or effective_message),
         "raw_user_message": payload.message,
         "parent_run_id": str(route.get("parent_run_id") or ""),
+        "start_new_thread": bool(payload.start_new_thread),
         "intent": intent,
         "genre_id": genre["genre_id"],
         "duration": effective_duration,
@@ -1150,7 +1420,7 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
         if route.get("notes"):
             cmd.extend(["--notes", str(route["notes"])])
         settings_patch = route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}
-        settings_for_cmd = _current_settings_from_parent(_parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id)), payload)
+        settings_for_cmd = _current_settings_from_parent(_route_parent_context(route, payload), payload)
         settings_for_cmd.update(_clean_settings_patch(settings_patch))
         if settings_for_cmd.get("voice_speed") is not None:
             cmd.extend(["--voice-speed", str(settings_for_cmd["voice_speed"])])
@@ -1177,7 +1447,7 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
         if agent_instructions:
             cmd.extend(["--agent-instructions-json", json.dumps(agent_instructions, ensure_ascii=True)])
         if route.get("rerun_stage_id"):
-            parent = _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
+            parent = _route_parent_context(route, payload)
             parent_run_dir = _resolve_existing_path(Path(str(parent.get("pipeline_run_dir") or "")))
             if not parent_run_dir.exists():
                 raise RuntimeError("Cannot rerun this node because the parent pipeline artifacts are missing.")
@@ -1592,11 +1862,86 @@ def _read_run(path: Path) -> dict[str, Any]:
             final["artifacts"] = _collect_final_artifacts(run)
         if changed:
             _save_run(run)
-        return run
+        return _with_thread_runs(run)
 
 
 def _read_run_raw(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _with_thread_runs(run: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(run)
+    thread_runs = [_thread_run_payload(parent) for parent in _thread_ancestors(run)]
+    thread_runs.append(_thread_run_payload(run))
+    payload["thread_runs"] = thread_runs
+    return payload
+
+
+def _thread_ancestors(run: dict[str, Any]) -> list[dict[str, Any]]:
+    ancestors: list[dict[str, Any]] = []
+    seen: set[str] = {str(run.get("id") or "")}
+    parent_id = str(run.get("parent_run_id") or "").strip()
+    while parent_id and parent_id not in seen:
+        seen.add(parent_id)
+        parent = _load_thread_run(parent_id)
+        if not parent:
+            break
+        ancestors.insert(0, parent)
+        parent_id = str(parent.get("parent_run_id") or "").strip()
+    return ancestors
+
+
+def _load_thread_run(run_id: str) -> dict[str, Any]:
+    path = _existing_run_path(run_id)
+    if path.exists():
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            _refresh_run_from_pipeline_files(run)
+            _ensure_prompt_texts(run)
+            if run.get("status") in TERMINAL_STATUSES:
+                final = _stage_by_id(run, "final_output")
+                final["output_json"].update(_final_output_json(run))
+                final["artifacts"] = _collect_final_artifacts(run)
+            return run
+        except Exception:
+            return {}
+    run = _read_run_from_db(run_id) or {}
+    if run:
+        _sanitize_run(run)
+        _refresh_run_from_pipeline_files(run)
+    return run
+
+
+def _thread_run_payload(run: dict[str, Any]) -> dict[str, Any]:
+    keys = {
+        "id",
+        "user_message",
+        "effective_message",
+        "source_prompt",
+        "raw_user_message",
+        "parent_run_id",
+        "chat_history",
+        "intent",
+        "genre_id",
+        "duration",
+        "notes",
+        "settings",
+        "settings_patch",
+        "music_path",
+        "agent_instructions",
+        "llm_provider",
+        "llm_model",
+        "status",
+        "route_summary",
+        "created_at",
+        "updated_at",
+        "pipeline_run_dir",
+        "stdout_path",
+        "returncode",
+        "stages",
+    }
+    return {key: run.get(key) for key in keys if key in run}
 
 
 def _save_run(run: dict[str, Any]) -> None:
@@ -1619,16 +1964,12 @@ def _save_run(run: dict[str, Any]) -> None:
 
 def _list_runs_from_db() -> list[dict[str, Any]]:
     try:
-        from sqlalchemy import select
-
-        from app.core.database import SessionLocal
-        from app.models import AgentRunSnapshot
-
-        with SessionLocal() as db:
+        models = _models_module()
+        with _playground_session() as db:
             rows = db.scalars(
-                select(AgentRunSnapshot)
-                .where(AgentRunSnapshot.surface == "playground")
-                .order_by(AgentRunSnapshot.updated_at.desc())
+                select(models.AgentRunSnapshot)
+                .where(models.AgentRunSnapshot.surface == "playground")
+                .order_by(models.AgentRunSnapshot.updated_at.desc())
                 .limit(50)
             ).all()
             return [
@@ -1647,11 +1988,9 @@ def _list_runs_from_db() -> list[dict[str, Any]]:
 
 def _read_run_from_db(run_id: str) -> dict[str, Any] | None:
     try:
-        from app.core.database import SessionLocal
-        from app.models import AgentRunSnapshot
-
-        with SessionLocal() as db:
-            row = db.get(AgentRunSnapshot, run_id)
+        models = _models_module()
+        with _playground_session() as db:
+            row = db.get(models.AgentRunSnapshot, run_id)
             if row is None or row.surface != "playground":
                 return None
             payload = row.payload_json if isinstance(row.payload_json, dict) else {}
@@ -1670,19 +2009,19 @@ def _read_run_from_db(run_id: str) -> dict[str, Any] | None:
 
 def _save_run_to_db(run: dict[str, Any]) -> None:
     try:
-        from app.core.database import SessionLocal
-        from app.models import AgentRunSnapshot
-
-        with SessionLocal() as db:
-            row = db.get(AgentRunSnapshot, str(run["id"]))
+        models = _models_module()
+        with _playground_session() as db:
+            row = db.get(models.AgentRunSnapshot, str(run["id"]))
             if row is None:
-                row = AgentRunSnapshot(id=str(run["id"]), surface="playground")
+                row = models.AgentRunSnapshot(id=str(run["id"]), surface="playground")
                 db.add(row)
             row.user_message = str(run.get("user_message") or run.get("raw_user_message") or "")
             row.genre_id = str(run.get("genre_id") or "")
             row.status = str(run.get("status") or "running")
             row.pipeline_run_dir = str(run.get("pipeline_run_dir") or "")
-            row.payload_json = run
+            payload = dict(run)
+            payload.pop("thread_runs", None)
+            row.payload_json = payload
             db.commit()
     except Exception:
         pass
@@ -1788,9 +2127,10 @@ def _safe_payload(payload: PlaygroundRunCreate) -> dict[str, Any]:
     data["effective_duration"] = route["effective_duration"]
     data["intent"] = route["intent"]
     data["source_prompt"] = route["source_prompt"]
+    data["rerun_stage_id"] = route["rerun_stage_id"]
     data["settings_patch"] = route["settings_patch"]
     data["settings"] = {
-        **_current_settings_from_parent(_parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id)), payload),
+        **_current_settings_from_parent(_route_parent_context(route, payload), payload),
         **_clean_settings_patch(route["settings_patch"] if isinstance(route["settings_patch"], dict) else {}),
     }
     data["settings"]["music_path"] = str(route.get("music_path") or "")
@@ -1825,17 +2165,70 @@ def _duration_from_text(text: str) -> int | None:
     return None
 
 
+def _settings_from_text(text: str) -> dict[str, Any]:
+    source = str(text or "")
+    settings: dict[str, Any] = {}
+    duration = _duration_from_text(source)
+    if duration is not None:
+        settings["duration"] = duration
+
+    caption_patterns = (
+        r"\b([1-8])\s*(?:words?)\s*(?:per|for|in)?\s*(?:caption|captions|subtitle|subtitles)\b",
+        r"\b(?:caption|captions|subtitle|subtitles)\s*(?:words?|word count)?\s*(?:to|is|=|:|-)?\s*([1-8])\b",
+    )
+    for pattern in caption_patterns:
+        match = re.search(pattern, source, flags=re.I)
+        if match:
+            settings["caption_words"] = int(match.group(1))
+            break
+
+    image_patterns = (
+        r"\b([1-9]|1[0-9]|2[0-4])\s*(?:images?|visuals?|pictures?|assets?)\b",
+        r"\b(?:images?|visuals?|pictures?|assets?)\s*(?:count|to|is|=|:|-)?\s*([1-9]|1[0-9]|2[0-4])\b",
+    )
+    for pattern in image_patterns:
+        match = re.search(pattern, source, flags=re.I)
+        if match:
+            settings["image_count"] = int(match.group(1))
+            break
+
+    return _clean_settings_patch(settings)
+
+
 def _strip_duration_instruction(text: str) -> str:
     cleaned = str(text or "")
     cleaned = re.sub(r"\b(?:keep|set|use|with)?\s*(?:the\s+)?duration\s*(?:of|for|to|is|:|=|,|-)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\b(?:keep|set|use)\s+(?:it\s+)?(?:for|to)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\b(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
-    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use)\b\s*$", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use|for|to|with)\b\s*$", " ", cleaned, flags=re.I)
     return " ".join(cleaned.split()).strip(" ,.;")
 
 
 def _genre_for(genre_id: str) -> dict[str, Any]:
+    try:
+        models = _models_module()
+        with _static_session() as db:
+            row = db.get(models.Genre, genre_id)
+            if row is None:
+                row = db.scalar(
+                    select(models.Genre).where(models.Genre.is_active.is_(True)).order_by(models.Genre.display_name.asc())
+                )
+            if row is not None:
+                return {
+                    "genre_id": row.id,
+                    "display_name": row.display_name,
+                    "tone": row.tone,
+                    "word_count_min": row.word_count_min,
+                    "word_count_max": row.word_count_max,
+                    "hook_patterns": row.hook_patterns or [],
+                    "banned_phrases": row.banned_phrases or [],
+                    "visual_style": row.visual_style or {},
+                    "topic_rules": row.topic_rules or [],
+                    "script_profile": (row.metadata_json or {}).get("script_profile", {}),
+                }
+    except Exception:
+        pass
     path = _pipeline_data_dir() / "genres" / f"{genre_id}.yaml"
     if not path.exists():
         genres = list_genres()
@@ -2032,6 +2425,7 @@ def _resolve_existing_path(path: Path) -> Path:
         ("/app/playground/data/runs", _legacy_runs_dir()),
         ("/app/data/playground/runs", _runs_dir()),
         ("/app/playground/data/pipeline", _pipeline_data_dir()),
+        ("/app/data/pipeline", _project_root() / "backend" / "data" / "pipeline"),
     )
     for prefix, root in remaps:
         if raw == prefix or raw.startswith(prefix + "/"):

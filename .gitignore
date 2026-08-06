@@ -4,6 +4,7 @@
 secrets/
 __pycache__/
 *.pyc
+*.tsbuildinfo
 node_modules/
 dist/
 !playground/ui/
@@ -15,3 +16,5 @@ release/
 playground-runs/
 runs/
 *.log
+playground/ui/vite.config.d.ts
+playground/ui/vite.config.js

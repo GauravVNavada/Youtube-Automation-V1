@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies import get_current_user
-from app.models import Chat, GenerationFeedback, GenreCalibration, Message, OnboardingState, User, VideoJob
+from app.dependencies import require_active_entitlement
+from app.models import Chat, GenerationFeedback, GenreCalibration, Message, OnboardingState, User, VideoJob, utc_now
 from app.schemas import ChatCreate, ChatOut, ChatReply, MessageCreate, MessageOut
 from app.services.agent_contracts import build_agent_contracts
 from app.services.generation_settings import normalize_generation_settings
@@ -18,12 +18,12 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 
 @router.get("", response_model=list[ChatOut])
-def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Chat]:
+def list_chats(user: User = Depends(require_active_entitlement), db: Session = Depends(get_db)) -> list[Chat]:
     return db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(Chat.updated_at.desc())).all()
 
 
 @router.post("", response_model=ChatOut)
-def create_chat(payload: ChatCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Chat:
+def create_chat(payload: ChatCreate, user: User = Depends(require_active_entitlement), db: Session = Depends(get_db)) -> Chat:
     chat = Chat(user_id=user.id, title=payload.title or "New chat")
     db.add(chat)
     state = _state_for(db, user)
@@ -35,7 +35,7 @@ def create_chat(payload: ChatCreate, user: User = Depends(get_current_user), db:
 
 
 @router.post("/{chat_id}/activate", response_model=ChatOut)
-def activate_chat(chat_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Chat:
+def activate_chat(chat_id: str, user: User = Depends(require_active_entitlement), db: Session = Depends(get_db)) -> Chat:
     chat = _chat_for(db, user, chat_id)
     state = _state_for(db, user)
     state.active_chat_id = chat.id
@@ -44,7 +44,7 @@ def activate_chat(chat_id: str, user: User = Depends(get_current_user), db: Sess
 
 
 @router.get("/{chat_id}/messages", response_model=list[MessageOut])
-def messages(chat_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Message]:
+def messages(chat_id: str, user: User = Depends(require_active_entitlement), db: Session = Depends(get_db)) -> list[Message]:
     _chat_for(db, user, chat_id)
     return db.scalars(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
 
@@ -53,7 +53,7 @@ def messages(chat_id: str, user: User = Depends(get_current_user), db: Session =
 def send_message(
     chat_id: str,
     payload: MessageCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_active_entitlement),
     db: Session = Depends(get_db),
 ) -> ChatReply:
     chat = _chat_for(db, user, chat_id)
@@ -65,6 +65,8 @@ def send_message(
     feedback = _feedback_for_job(db, user.id, latest_job.id if latest_job else "")
     user_message = Message(chat_id=chat.id, role="user", content=payload.content)
     db.add(user_message)
+    if _should_rename_chat(chat):
+        chat.title = _chat_title(payload.content)
     decision = decide_next_action(
         payload.content,
         state.genre_id or (latest_job.genre if latest_job else "scary_stories"),
@@ -109,13 +111,14 @@ def send_message(
                 "planned_agents": contracts,
             }
         )
-        reply_text = decision.get("reply_text") or f"I queued one video for: {topic}"
+        reply_text = decision.get("reply_text") or f"Got it. I'll make a short about {topic} using your selected style."
     elif decision.get("needs_clarification"):
         reply_text = decision.get("reply_text") or "Tell me one more concrete detail for the video topic, like place, person, time, or exact incident."
     else:
-        reply_text = decision.get("reply_text") or "Tell me the video idea and I will turn it into a grounded short."
+        reply_text = decision.get("reply_text") or "Tell me the video idea and I'll turn it into a grounded short."
     assistant = Message(chat_id=chat.id, role="assistant", content=reply_text, message_metadata=metadata)
     db.add(assistant)
+    chat.updated_at = utc_now()
     db.commit()
     db.refresh(assistant)
     if job_id:
@@ -244,3 +247,14 @@ def _merge_agent_instructions(*items: dict) -> dict[str, str]:
                 continue
             merged[key] = f"{merged[key]}\n{text}".strip() if key in merged else text
     return merged
+
+
+def _should_rename_chat(chat: Chat) -> bool:
+    return not chat.title.strip() or chat.title.strip().lower() in {"new chat", "studio"}
+
+
+def _chat_title(content: str) -> str:
+    words = " ".join(str(content or "").strip().split())
+    if not words:
+        return "New chat"
+    return words[:57].rstrip(" .,!?") + ("..." if len(words) > 57 else "")

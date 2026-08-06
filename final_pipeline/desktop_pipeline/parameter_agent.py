@@ -138,11 +138,11 @@ def map_parameter_request(message: str, current_settings: dict[str, Any] | None 
     if _mentions(text, "music", "background", "bgm", "song"):
         if _mentions(text, "loud", "high", "overpower"):
             patch["music_volume"] = round(max(0.0, music_volume - 0.06), 2)
-            target = target or "render_agent"
+            target = target or "music_agent"
             reasons.append("music is too loud")
         elif _mentions(text, "low", "quiet", "silent"):
             patch["music_volume"] = round(min(0.8, music_volume + 0.05), 2)
-            target = target or "render_agent"
+            target = target or "music_agent"
             reasons.append("music is too quiet")
 
     duration_match = re.search(r"\b(\d{2,3})\s*(?:sec|secs|second|seconds|s)\b", text)

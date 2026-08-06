@@ -9,7 +9,7 @@ def get_queue(name: str | None = None):
     from rq import Queue
 
     connection = Redis.from_url(settings.redis_url)
-    return Queue(name or settings.queue_name, connection=connection)
+    return Queue(name or settings.queue_name, connection=connection, default_timeout=settings.worker_job_timeout)
 
 
 def calibration_queue_name(sample_index: int) -> str:

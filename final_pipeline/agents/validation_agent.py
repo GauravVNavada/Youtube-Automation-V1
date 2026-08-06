@@ -13,7 +13,16 @@ from app.schemas import (
     ValidationResult,
 )
 from modules.scripts.validator import validate_script
-from modules.scripts.generator import validate_script_subjective_with_llm
+from modules.scripts.generator import (
+    _compact_research,
+    _filter_research_for_topic,
+    validate_image_cues,
+    validate_script_grounding,
+    validate_script_originality,
+    validate_script_relevance,
+    validate_script_subjective_with_llm,
+)
+from modules.scripts.structure import validate_narrative_structure
 
 
 class ValidationAgent(BaseAgent):
@@ -26,21 +35,30 @@ class ValidationAgent(BaseAgent):
         provider=None,
         topic: str = "",
         reference_scripts: list[dict] | None = None,
+        growth_context=None,
     ) -> ValidationResult:
+        research = _filter_research_for_topic(_compact_research(growth_context), topic)
         payload = {
             "stage": "script",
             "word_count": script.word_count,
             "topic": topic,
             "reference_count": len(reference_scripts or []),
+            "uses_research_grounding": bool(research),
             "uses_llm_subjective_validation": bool(provider and topic),
             "validation_max_input_chars": 3000,
             "validation_max_output_tokens": 300,
         }
         self.log_input(payload)
         result = validate_script(script, genre.word_count_min, genre.word_count_max)
+        result.issues.extend(validate_script_grounding(script, research))
+        result.issues.extend(validate_narrative_structure(script.narration))
+        if topic:
+            result.issues.extend(validate_script_relevance(script, topic))
+        result.issues.extend(validate_script_originality(script, reference_scripts or []))
+        result.issues.extend(validate_image_cues(script.image_cues))
         if provider and topic:
             result.issues.extend(validate_script_subjective_with_llm(provider, script, topic, reference_scripts or []))
-            result.passed = not result.issues
+        result.passed = not result.issues
         result.repair_notes = _repair_notes_for_stage("script", result.issues)
         self.event("Script validation complete", passed=result.passed, issues=result.issues)
         self.log_output(result)

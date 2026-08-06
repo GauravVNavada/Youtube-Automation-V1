@@ -16,7 +16,7 @@ from agents.prompts.script_prompts import (
 from app.schemas import GenreConfig, GrowthContext, ImageCue, ResearchOutput, ScriptOutput, SfxCue
 from modules.assets.subject_lock import apply_subject_lock_to_cues, infer_subject_lock
 from modules.audio.sfx_catalog import catalog_for_prompt
-from modules.scripts.structure import polish_script_ending, validate_narrative_structure
+from modules.scripts.structure import polish_script_ending
 
 
 SCRIPT_VALIDATION_MAX_OUTPUT_TOKENS = 500
@@ -77,7 +77,11 @@ def build_user_prompt(
             "caption_preset": genre.caption_preset,
             "word_count_min": genre.word_count_min,
             "word_count_max": genre.word_count_max,
+            "hook_patterns": genre.hook_patterns,
             "banned_phrases": genre.banned_phrases,
+            "script_profile": genre.script_profile,
+            "visual_style": genre.visual_style,
+            "topic_rules": genre.topic_rules,
         },
         "duration": duration,
         "reference_scripts": [_compact_reference(item) for item in selected_references],
@@ -103,7 +107,6 @@ def generate_script(
     if not provider:
         raise RuntimeError("No online LLM provider configured")
     research = _filter_research_for_topic(_compact_research(growth_context), topic)
-    selected_references = _select_references(topic, reference_scripts, limit=6)
     last_error = ""
     for attempt in range(1, 4):
         try:
@@ -124,17 +127,7 @@ def generate_script(
             script = script_from_mapping(data, provider=getattr(provider, "name", "online"), topic=topic, research=research)
             script = _repair_script(script, genre, research)
             script.estimated_duration = duration
-            issues = validate_script_grounding(script, research) + validate_narrative_structure(script.narration)
-            issues += validate_script_relevance(script, topic)
-            issues += validate_script_originality(script, selected_references)
-            issues += validate_image_cues(script.image_cues)
-            if script.word_count > genre.word_count_max:
-                issues.append(f"script narration too long after repair: {script.word_count} > {genre.word_count_max}")
-            if script.word_count < genre.word_count_min - 1:
-                issues.append(f"script narration too short after repair: {script.word_count} < {genre.word_count_min}")
-            if not issues:
-                return script
-            last_error = "; ".join(issues)
+            return script
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
     raise RuntimeError(

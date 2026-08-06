@@ -22,14 +22,16 @@ target_agent: audio_agent | asset_agent | caption_agent | script_agent | render_
 settings_patch: object with only changed settings
 agent_instructions: object keyed by target agent name
 notes: concise generation/repair notes
-reply_text: short user-facing response
+reply_text: natural user-facing response, one or two short sentences
 reason: concise routing reason
 
 Rules:
 - After calibration, edit requests like "audio is too fast" should become edit_video for the latest job.
 - Do not queue vague prompts. Ask for one concrete detail.
 - Keep the selected style and genre unless the user clearly asks to change them.
-- Do not create scripts, assets, captions, or final video content here."""
+- Do not create scripts, assets, captions, or final video content here.
+- Make reply_text sound like a helpful person. Avoid robotic labels such as "queued one video for:".
+"""
 
 
 EXAMPLES = [
@@ -56,7 +58,7 @@ EXAMPLES = [
                 "settings_patch": {},
                 "agent_instructions": {},
                 "notes": "Use the selected calibrated style.",
-                "reply_text": "I queued one video for: school hallway chase",
+                "reply_text": "Got it. I'll make a short about a school hallway chase using your selected style.",
                 "reason": "Concrete new topic after calibration.",
             }
         ),
@@ -87,7 +89,7 @@ EXAMPLES = [
                 "settings_patch": {"voice_speed": 0.88, "image_count": 10},
                 "agent_instructions": {"asset_agent": "Replace weak or repeated visuals with subject-matched assets."},
                 "notes": "Remake one child video from the latest job.",
-                "reply_text": "I queued a single updated version using the selected style.",
+                "reply_text": "Got it. I'll make one updated version with slower audio and stronger visuals.",
                 "reason": "User requested parameter and asset fixes to the latest video.",
             }
         ),
@@ -217,11 +219,12 @@ def _has_concrete_topic(text: str) -> bool:
 
 def _default_reply(decision: RouteDecision) -> str:
     if decision.intent == "edit_video":
-        return "I queued a single updated version using the selected style."
+        return "Got it. I'll make one updated version using the selected style."
     if decision.intent == "generate_video":
-        return f"I queued one video for: {decision.topic or decision.source_prompt}"
+        topic = decision.topic or decision.source_prompt
+        return f"Got it. I'll make a short about {topic} using your selected style." if topic else "Got it. I'll make a short using your selected style."
     if decision.intent == "save_preference":
-        return "I saved that preference for the next generation."
+        return "Got it. I'll remember that preference for the next generation."
     if decision.intent == "chat":
         return "Tell me the video idea or the change you want."
     return "Tell me one more concrete detail for the video."

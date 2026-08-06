@@ -8,9 +8,6 @@ from pathlib import Path
 from modules.render.ffmpeg_builder import build_image_slideshow_command, build_media_timeline_command
 
 
-RENDER_AUDIO_TAIL_PAD_SECONDS = 0.35
-
-
 def render_video(
     image_paths: list[str],
     audio_path: str,
@@ -45,10 +42,7 @@ def render_video(
 
     requested_duration_seconds = max(1.0, duration_ms / 1000.0)
     audio_duration_seconds = probe_audio_file_duration(audio_path, ffprobe)
-    duration_seconds = max(
-        requested_duration_seconds,
-        audio_duration_seconds + RENDER_AUDIO_TAIL_PAD_SECONDS,
-    )
+    duration_seconds = requested_duration_seconds
     if media_paths:
         cmd = build_media_timeline_command(
             ffmpeg=ffmpeg,
@@ -92,6 +86,9 @@ def render_video(
         raise RuntimeError(f"FFmpeg failed: {proc.stderr[-2000:]}")
 
     meta = probe_video(str(tmp_path), ffprobe)
+    meta["requested_duration_seconds"] = requested_duration_seconds
+    meta["source_audio_duration_seconds"] = audio_duration_seconds
+    meta["duration_policy"] = "strict_requested"
     if int(meta["width"]) != width or int(meta["height"]) != height:
         raise RuntimeError(f"Unexpected video dimensions: {meta}")
     if output_path.exists():

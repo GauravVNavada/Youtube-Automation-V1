@@ -107,6 +107,19 @@ class AudioAgent(BaseAgent):
             final_path = padded_path
             timestamps = _shift_word_timestamps(timestamps, INITIAL_AUDIO_SILENCE_MS)
             actual_duration_ms = (probe_audio_duration_ms(final_path) or actual_duration_ms + INITIAL_AUDIO_SILENCE_MS)
+        target_duration_ms = max(1000, int(duration or 0) * 1000)
+        if provider in {"google_tts", "edge_tts"} and actual_duration_ms > target_duration_ms + 750:
+            compressed_path = audio_dir / "final_audio_duration_matched.wav"
+            if _time_compress_audio(final_path, compressed_path, actual_duration_ms, target_duration_ms):
+                self.event(
+                    "Matched narration to requested duration",
+                    before_ms=actual_duration_ms,
+                    target_ms=target_duration_ms,
+                )
+                final_path = compressed_path
+                new_duration_ms = probe_audio_duration_ms(final_path) or target_duration_ms
+                timestamps = _scale_word_timestamps(timestamps, actual_duration_ms, new_duration_ms)
+                actual_duration_ms = new_duration_ms
         quality = analyze_audio_quality(final_path)
         bundle = AudioBundle(
             narration_path=str(narration_path),
@@ -346,6 +359,60 @@ def _shift_word_timestamps(words: list[WordTimestamp], offset_ms: int) -> list[W
         )
         for word in words
     ]
+
+
+def _scale_word_timestamps(words: list[WordTimestamp], source_duration_ms: int, target_duration_ms: int) -> list[WordTimestamp]:
+    if source_duration_ms <= 0 or target_duration_ms <= 0:
+        return words
+    scale = target_duration_ms / source_duration_ms
+    scaled: list[WordTimestamp] = []
+    for word in words:
+        start_ms = max(0, min(target_duration_ms, int(word.start_ms * scale)))
+        end_ms = max(start_ms + 1, min(target_duration_ms, int(word.end_ms * scale)))
+        scaled.append(WordTimestamp(word=word.word, start_ms=start_ms, end_ms=end_ms))
+    return scaled
+
+
+def _time_compress_audio(source_path: Path, target_path: Path, source_duration_ms: int, target_duration_ms: int) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or source_duration_ms <= target_duration_ms:
+        return False
+    tempo = source_duration_ms / max(1, target_duration_ms)
+    if tempo <= 1.01:
+        return False
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(source_path),
+            "-filter:a",
+            _atempo_filter(tempo),
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            str(target_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return proc.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0
+
+
+def _atempo_filter(tempo: float) -> str:
+    parts: list[str] = []
+    remaining = max(0.5, float(tempo))
+    while remaining > 2.0:
+        parts.append("atempo=2.000")
+        remaining /= 2.0
+    while remaining < 0.5:
+        parts.append("atempo=0.500")
+        remaining /= 0.5
+    parts.append(f"atempo={remaining:.3f}")
+    return ",".join(parts)
 
 
 def _generate_tone_fallback(output_path: Path, duration_ms: int) -> None:

@@ -66,6 +66,9 @@ class GenreConfig:
     music_mood: str
     hook_patterns: list[str] = field(default_factory=list)
     banned_phrases: list[str] = field(default_factory=list)
+    visual_style: dict[str, Any] = field(default_factory=dict)
+    topic_rules: list[dict[str, Any]] = field(default_factory=list)
+    script_profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

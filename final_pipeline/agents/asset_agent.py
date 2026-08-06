@@ -413,7 +413,7 @@ def _select_media_for_cue(
                     url=candidate.url,
                     score=candidate.score,
                 )
-            path = download_image_candidate(candidate, fetch_cue, image_dir, image_attempts)
+            path = download_image_candidate(candidate, fetch_cue, image_dir, image_attempts, genre=genre)
             if path in used_asset_paths:
                 _record_duplicate_path(candidate, path, image_attempts)
                 continue
