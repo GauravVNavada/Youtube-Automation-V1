@@ -1,0 +1,15 @@
+genre_id: comics
+display_name: Comics
+word_count_min: 75
+word_count_max: 125
+tone: Bold comic-book narration with heroic stakes, clear conflict, and fast visual beats.
+layout: full_image
+caption_preset: clean_pro
+voice_rate: 1.06
+music_mood: heroic pulse
+hook_patterns:
+  - Every great comic fight starts with {conflict}.
+  - The panel that changes everything is {detail}.
+banned_phrases:
+  - official marvel
+  - official dc

@@ -9,7 +9,7 @@ frontend/release/
 frontend/release/**/*
 backend/data/pipeline/runs/
 playground/data/pipeline/runs/
-pipeline/runs/
+final_pipeline/runs/
 *.sqlite
 *.db
 *.log

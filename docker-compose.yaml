@@ -1,5 +1,5 @@
 services:
-  db_app:
+  db_user:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${APP_DB_USER:-pradeep}
@@ -8,9 +8,25 @@ services:
     ports:
       - "${APP_DB_PORT:-5432}:5432"
     volumes:
-      - app_postgres_data:/var/lib/postgresql/data
+      - user_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-pradeep} -d ${APP_DB_NAME:-automation}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db_static:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${STATIC_DB_USER:-static_assets}
+      POSTGRES_PASSWORD: ${STATIC_DB_PASSWORD:-static_assets}
+      POSTGRES_DB: ${STATIC_DB_NAME:-static_assets}
+    ports:
+      - "${STATIC_DB_PORT:-5434}:5432"
+    volumes:
+      - static_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STATIC_DB_USER:-static_assets} -d ${STATIC_DB_NAME:-static_assets}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -48,22 +64,42 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_app:5432/${APP_DB_NAME:-automation}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      USER_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      STATIC_DATABASE_URL: postgresql+psycopg://${STATIC_DB_USER:-static_assets}:${STATIC_DB_PASSWORD:-static_assets}@db_static:5432/${STATIC_DB_NAME:-static_assets}
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_DB_USER:-playground}:${PLAYGROUND_DB_PASSWORD:-playground}@db_playground:5432/${PLAYGROUND_DB_NAME:-playground}
       REDIS_URL: redis://redis:6379/0
       MODULARSHORTS_DATA_DIR: /app/data/pipeline
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
       PLAYGROUND_PIPELINE_DATA_DIR: /app/playground/data/pipeline
-      PLAYGROUND_RUNS_DIR: /app/playground/data/runs
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8084}
+      PLAYGROUND_RUNS_DIR: /app/data/playground/runs
+      PLAYGROUND_MAX_MUSIC_UPLOAD_MB: ${PLAYGROUND_MAX_MUSIC_UPLOAD_MB:-300}
+      STATIC_ASSET_EXTRA_ROOTS: /app/pk_assets
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8084},http://localhost:3001,http://localhost:5173,http://localhost:5174,file://,null
       GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      PAYMENT_CURRENCY: ${PAYMENT_CURRENCY:-INR}
+      PAYMENT_SITE_URL: ${PAYMENT_SITE_URL:-http://localhost:3001}
+      PAYMENT_MONTHLY_PLAN_ID: ${PAYMENT_MONTHLY_PLAN_ID:-}
+      PAYMENT_YEARLY_PLAN_ID: ${PAYMENT_YEARLY_PLAN_ID:-}
+      PAYMENT_MONTHLY_AMOUNT_PAISE: ${PAYMENT_MONTHLY_AMOUNT_PAISE:-49900}
+      PAYMENT_YEARLY_AMOUNT_PAISE: ${PAYMENT_YEARLY_AMOUNT_PAISE:-499900}
+      PAYMENT_LIFETIME_AMOUNT_PAISE: ${PAYMENT_LIFETIME_AMOUNT_PAISE:-999900}
     ports:
       - "${APP_PORT:-8084}:8080"
     volumes:
       - ./backend/data:/app/data
       - ./playground/data:/app/playground/data
+      - ${PK_ASSETS_DIR:-../PK/YTSHORTSAUTOMATION/assets}:/app/pk_assets:ro
       - ./secrets:/app/secrets:ro
     depends_on:
-      db_app:
+      db_user:
+        condition: service_healthy
+      db_static:
+        condition: service_healthy
+      db_playground:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -76,13 +112,19 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_app:5432/${APP_DB_NAME:-automation}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      USER_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      STATIC_DATABASE_URL: postgresql+psycopg://${STATIC_DB_USER:-static_assets}:${STATIC_DB_PASSWORD:-static_assets}@db_static:5432/${STATIC_DB_NAME:-static_assets}
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_DB_USER:-playground}:${PLAYGROUND_DB_PASSWORD:-playground}@db_playground:5432/${PLAYGROUND_DB_NAME:-playground}
       REDIS_URL: redis://redis:6379/0
       MODULARSHORTS_DATA_DIR: /app/data/pipeline
       MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
+      STATIC_ASSET_EXTRA_ROOTS: /app/pk_assets
       GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
+      WORKER_QUEUES: ${QUEUE_NAME:-video_jobs}
     volumes:
       - ./backend/data:/app/data
+      - ${PK_ASSETS_DIR:-../PK/YTSHORTSAUTOMATION/assets}:/app/pk_assets:ro
       - ./secrets:/app/secrets:ro
     depends_on:
       backend:
@@ -90,25 +132,124 @@ services:
       redis:
         condition: service_healthy
 
-  frontend:
+  worker_calibration_1:
     build:
       context: .
-      dockerfile: frontend/Dockerfile
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      USER_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      STATIC_DATABASE_URL: postgresql+psycopg://${STATIC_DB_USER:-static_assets}:${STATIC_DB_PASSWORD:-static_assets}@db_static:5432/${STATIC_DB_NAME:-static_assets}
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_DB_USER:-playground}:${PLAYGROUND_DB_PASSWORD:-playground}@db_playground:5432/${PLAYGROUND_DB_NAME:-playground}
+      REDIS_URL: redis://redis:6379/0
+      MODULARSHORTS_DATA_DIR: /app/data/pipeline
+      MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
+      STATIC_ASSET_EXTRA_ROOTS: /app/pk_assets
+      GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
+      WORKER_QUEUES: ${QUEUE_NAME:-video_jobs}_calibration_1
+    volumes:
+      - ./backend/data:/app/data
+      - ${PK_ASSETS_DIR:-../PK/YTSHORTSAUTOMATION/assets}:/app/pk_assets:ro
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  worker_calibration_2:
+    extends:
+      service: worker_calibration_1
+    environment:
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      USER_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      STATIC_DATABASE_URL: postgresql+psycopg://${STATIC_DB_USER:-static_assets}:${STATIC_DB_PASSWORD:-static_assets}@db_static:5432/${STATIC_DB_NAME:-static_assets}
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_DB_USER:-playground}:${PLAYGROUND_DB_PASSWORD:-playground}@db_playground:5432/${PLAYGROUND_DB_NAME:-playground}
+      REDIS_URL: redis://redis:6379/0
+      MODULARSHORTS_DATA_DIR: /app/data/pipeline
+      MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
+      STATIC_ASSET_EXTRA_ROOTS: /app/pk_assets
+      GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
+      WORKER_QUEUES: ${QUEUE_NAME:-video_jobs}_calibration_2
+
+  worker_calibration_3:
+    extends:
+      service: worker_calibration_1
+    environment:
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      USER_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pradeep}:${APP_DB_PASSWORD:-password}@db_user:5432/${APP_DB_NAME:-automation}
+      STATIC_DATABASE_URL: postgresql+psycopg://${STATIC_DB_USER:-static_assets}:${STATIC_DB_PASSWORD:-static_assets}@db_static:5432/${STATIC_DB_NAME:-static_assets}
+      PLAYGROUND_DATABASE_URL: postgresql+psycopg://${PLAYGROUND_DB_USER:-playground}:${PLAYGROUND_DB_PASSWORD:-playground}@db_playground:5432/${PLAYGROUND_DB_NAME:-playground}
+      REDIS_URL: redis://redis:6379/0
+      MODULARSHORTS_DATA_DIR: /app/data/pipeline
+      MODULARSHORTS_RUNS_DIR: /app/data/pipeline/runs
+      STATIC_ASSET_EXTRA_ROOTS: /app/pk_assets
+      GOOGLE_TTS_CREDENTIALS: ${GOOGLE_TTS_CREDENTIALS:-/app/secrets/google-tts.json}
+      WORKER_QUEUES: ${QUEUE_NAME:-video_jobs}_calibration_3
+
+  playground_ui:
+    image: nginx:1.27-alpine
     ports:
       - "${FRONTEND_PORT:-3000}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./playground/ui/dist:/usr/share/nginx/html/playground:ro
     depends_on:
       - backend
 
-  adminer:
-    image: adminer:4
+  payment_website:
+    build:
+      context: ./payment_website
     ports:
-      - "${ADMINER_PORT:-8082}:8080"
+      - "${PAYMENT_WEBSITE_PORT:-3001}:80"
     depends_on:
-      db_app:
+      - backend
+
+  dbgate:
+    image: dbgate/dbgate:latest
+    ports:
+      - "${DB_VIEWER_PORT:-8082}:3000"
+    environment:
+      CONNECTIONS: user,static,playground
+
+      LABEL_user: User database
+      SERVER_user: db_user
+      PORT_user: 5432
+      USER_user: ${APP_DB_USER:-pradeep}
+      PASSWORD_user: ${APP_DB_PASSWORD:-password}
+      DATABASE_user: ${APP_DB_NAME:-automation}
+      ENGINE_user: postgres@dbgate-plugin-postgres
+
+      LABEL_static: Static assets database
+      SERVER_static: db_static
+      PORT_static: 5432
+      USER_static: ${STATIC_DB_USER:-static_assets}
+      PASSWORD_static: ${STATIC_DB_PASSWORD:-static_assets}
+      DATABASE_static: ${STATIC_DB_NAME:-static_assets}
+      ENGINE_static: postgres@dbgate-plugin-postgres
+
+      LABEL_playground: Playground database
+      SERVER_playground: db_playground
+      PORT_playground: 5432
+      USER_playground: ${PLAYGROUND_DB_USER:-playground}
+      PASSWORD_playground: ${PLAYGROUND_DB_PASSWORD:-playground}
+      DATABASE_playground: ${PLAYGROUND_DB_NAME:-playground}
+      ENGINE_playground: postgres@dbgate-plugin-postgres
+    volumes:
+      - dbgate_data:/root/.dbgate
+    depends_on:
+      db_user:
+        condition: service_healthy
+      db_static:
         condition: service_healthy
       db_playground:
         condition: service_healthy
 
 volumes:
-  app_postgres_data:
+  user_postgres_data:
+  static_postgres_data:
   playground_postgres_data:
+  dbgate_data:

@@ -1,0 +1,25 @@
+[
+  {
+    "genre_id": "comics",
+    "title": "The Panel With No Shadow",
+    "source_url": "seed://comics/panel-no-shadow",
+    "source_type": "seed_reference",
+    "duration_sec": 36,
+    "overall_score": 8.1,
+    "usable_as_few_shot": true,
+    "real_world_anchor": "Original comic-style structure for testing without copyrighted characters.",
+    "script": "The hero thought the villain was hiding in the smoke. Every panel showed broken glass, falling sparks, and one empty rooftop. Then the artist did something strange. In panel four, the hero had no shadow. That was the clue. The villain was not behind him. The villain had stolen the light itself. When the final panel went completely black, the speech bubble said only one thing: 'Now you can hear me.'",
+    "hook_first_sentence": "The hero thought the villain was hiding in the smoke.",
+    "hook_type": "visual_clue",
+    "hook_emotional_trigger": "anticipation",
+    "has_twist_reveal": true,
+    "twist_line": "The villain had stolen the light itself.",
+    "retention_hook": "In panel four, the hero had no shadow.",
+    "ending_type": "comic_panel_payoff",
+    "last_sentence": "Now you can hear me.",
+    "visual_keywords": ["comic rooftop", "broken glass", "falling sparks", "missing shadow", "black final panel"],
+    "facts": ["Use panel language.", "Make the clue visual.", "End with a short speech bubble."],
+    "why_it_worked": "It makes the viewer inspect a visual clue, then turns that clue into the twist.",
+    "what_to_improve": "Keep names generic to avoid brand/IP confusion."
+  }
+]

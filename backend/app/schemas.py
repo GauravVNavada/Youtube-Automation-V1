@@ -46,6 +46,53 @@ class UserOut(OrmModel):
     created_at: datetime
 
 
+class ProfileUpdateIn(BaseModel):
+    display_name: str = Field(default="", max_length=120)
+
+
+class BillingPlanOut(BaseModel):
+    code: str
+    label: str
+    kind: str
+    amount_paise: int
+    currency: str
+    interval: str = ""
+    configured: bool = False
+
+
+class BillingCheckoutIn(BaseModel):
+    plan_code: str = Field(min_length=1, max_length=40)
+
+
+class BillingCheckoutOut(BaseModel):
+    checkout_id: str
+    key_id: str
+    plan_code: str
+    label: str
+    kind: str
+    amount_paise: int
+    currency: str
+    order_id: str = ""
+    subscription_id: str = ""
+    prefill: dict[str, str] = {}
+
+
+class BillingVerifyIn(BaseModel):
+    checkout_id: str = Field(min_length=1, max_length=36)
+    razorpay_payment_id: str = Field(min_length=1, max_length=120)
+    razorpay_signature: str = Field(min_length=1, max_length=500)
+    razorpay_order_id: str = Field(default="", max_length=120)
+    razorpay_subscription_id: str = Field(default="", max_length=120)
+
+
+class EntitlementOut(BaseModel):
+    active: bool
+    source: str = "none"
+    status: str = "inactive"
+    plan_code: str = ""
+    expires_at: datetime | None = None
+
+
 class ApiKeyIn(BaseModel):
     provider: str = Field(min_length=1, max_length=80)
     value: str = Field(default="", max_length=8000)
@@ -224,6 +271,11 @@ class JobOut(OrmModel):
     render_plan_url: str | None = None
 
 
+class JobRetryIn(BaseModel):
+    stage_name: str = Field(default="", max_length=80)
+    notes: str = Field(default="", max_length=2000)
+
+
 class AgentProgressOut(BaseModel):
     name: str
     label: str
@@ -247,3 +299,45 @@ class JobLogsOut(BaseModel):
     stdout: str = ""
     stderr: str = ""
     error_message: str = ""
+
+
+class StageLogsOut(BaseModel):
+    job_id: str
+    stage_name: str
+    label: str = ""
+    status: str = "queued"
+    message: str = ""
+    events: list[dict[str, Any]] = []
+    input_json: dict[str, Any] | list[Any] | None = None
+    output_json: dict[str, Any] | list[Any] | None = None
+    error_json: dict[str, Any] | None = None
+    error_message: str = ""
+    stdout_lines: list[str] = []
+
+
+try:
+    from final_pipeline.app.schemas import (  # type: ignore[F401]
+        AssetBundle,
+        AudioBundle,
+        CaptionBundle,
+        GenreConfig,
+        GrowthContext,
+        ImageCue,
+        MusicBundle,
+        NicheProfile,
+        PipelineContext,
+        RenderResult,
+        ResearchOutput,
+        ResearchSource,
+        ScriptOutput,
+        SfxCue,
+        ThumbnailOutput,
+        TimedVisualCue,
+        TopicCandidate,
+        TopicDiscoveryOutput,
+        ValidationResult,
+        VisualStylePlan,
+        WordTimestamp,
+    )
+except Exception:
+    pass

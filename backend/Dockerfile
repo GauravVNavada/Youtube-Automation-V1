@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app:/app/pipeline
+    PYTHONPATH=/app:/app/final_pipeline
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir --upgrade "pip<26" "setuptools<70" whee
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY backend/app ./app
-COPY pipeline ./pipeline
+COPY final_pipeline ./final_pipeline
 COPY backend/data ./data
 
 EXPOSE 8080

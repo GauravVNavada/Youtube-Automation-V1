@@ -1,0 +1,481 @@
+:root {
+  color: #17201f;
+  background: #f5f7f4;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.topbar,
+.layout,
+.plans {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.navButtons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandMark,
+.planIcon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  color: #f8fffb;
+  background: #1f6f68;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand span {
+  color: #64736f;
+  font-size: 13px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 390px);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.layout.noAuth {
+  grid-template-columns: 1fr;
+}
+
+.intro {
+  min-height: 460px;
+  display: grid;
+  align-content: center;
+}
+
+.intro h1 {
+  max-width: 740px;
+  margin: 26px 0 14px;
+  font-size: clamp(38px, 6vw, 72px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.intro p {
+  max-width: 680px;
+  color: #52615d;
+  font-size: 18px;
+  line-height: 1.65;
+}
+
+.previewPanel,
+.authCard,
+.planCard,
+.notice {
+  border: 1px solid #d8e2dc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 60px rgba(28, 43, 39, 0.08);
+}
+
+.previewPanel {
+  max-width: 620px;
+  overflow: hidden;
+}
+
+.previewHeader {
+  display: flex;
+  gap: 6px;
+  padding: 12px;
+  background: #203532;
+}
+
+.previewHeader span {
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: #f0c66b;
+}
+
+.previewHeader span:nth-child(2) {
+  background: #8cc3b2;
+}
+
+.previewHeader span:nth-child(3) {
+  background: #d97d68;
+}
+
+.previewChat {
+  padding: 18px;
+  background: linear-gradient(135deg, #fdfdf9 0%, #eaf2ee 100%);
+}
+
+.bubble,
+.styleGrid div,
+.accountBox,
+.statusStrip {
+  border-radius: 8px;
+}
+
+.bubble {
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.userBubble {
+  margin-left: auto;
+  color: #f9fffc;
+  background: #1f6f68;
+}
+
+.appBubble {
+  color: #24403b;
+  background: #f3f8f5;
+}
+
+.styleGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.styleGrid div {
+  min-height: 88px;
+  display: grid;
+  align-content: end;
+  padding: 10px;
+  color: #f9fffc;
+  background: #31524d;
+  font-weight: 800;
+}
+
+.statusStrip,
+.accountBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.statusStrip {
+  width: fit-content;
+  margin-top: 16px;
+  padding: 10px 12px;
+  color: #1d5c55;
+  background: #e8f3ef;
+  font-weight: 800;
+}
+
+.authCard {
+  padding: 18px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #eef3f0;
+}
+
+.tabs button,
+.ghostButton {
+  border: 0;
+  cursor: pointer;
+  color: #31433f;
+  background: transparent;
+}
+
+.tabs button {
+  min-height: 40px;
+  border-radius: 6px;
+  font-weight: 800;
+}
+
+.tabs .active {
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(28, 43, 39, 0.08);
+}
+
+form {
+  display: grid;
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #4c5e59;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #cad8d2;
+  border-radius: 6px;
+  padding: 0 12px;
+  color: #17201f;
+  background: #fbfdfb;
+}
+
+.primaryButton,
+.ghostButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 7px;
+  font-weight: 900;
+}
+
+.primaryButton {
+  border: 0;
+  cursor: pointer;
+  color: #f9fffc;
+  background: #1f6f68;
+}
+
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.ghostButton {
+  border: 1px solid #cad8d2;
+  padding: 0 12px;
+  background: #ffffff;
+}
+
+.ghostButton.active {
+  border-color: #1f6f68;
+  color: #1f6f68;
+  background: #eef7f3;
+}
+
+.accountBox {
+  margin-top: 16px;
+  padding: 12px;
+  background: #eef7f3;
+}
+
+.accountBox strong,
+.accountBox span {
+  display: block;
+}
+
+.accountBox span {
+  color: #52615d;
+  font-size: 13px;
+}
+
+.notice {
+  width: min(1180px, calc(100% - 48px));
+  margin: 22px auto 0;
+  padding: 13px 15px;
+  font-weight: 800;
+}
+
+.notice.success {
+  color: #1d5c55;
+  background: #ecf8f3;
+}
+
+.notice.error {
+  color: #8d2c22;
+  background: #fff0ec;
+}
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 24px;
+  padding-bottom: 28px;
+}
+
+.paidHome {
+  width: min(760px, 100%);
+  margin: 24px auto 0;
+}
+
+.settingsPage {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding-bottom: 28px;
+}
+
+.settingsPage.narrow {
+  width: min(760px, 100%);
+}
+
+.settingsPage header {
+  margin: 18px 0;
+}
+
+.settingsPage h1 {
+  margin: 0 0 8px;
+  font-size: 38px;
+  letter-spacing: 0;
+}
+
+.settingsPage p {
+  margin: 0;
+  color: #5f6f6b;
+  line-height: 1.55;
+}
+
+.minorHeader {
+  margin-top: 18px;
+}
+
+.minorHeader h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.settingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settingCard,
+.profileCard {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8e2dc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 18px 60px rgba(28, 43, 39, 0.08);
+}
+
+.aiSetupCard {
+  width: min(760px, 100%);
+}
+
+.settingHead {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settingHead strong,
+.settingHead span {
+  display: block;
+}
+
+.settingHead span {
+  color: #64736f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.planCard {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.planCard.featured {
+  border-color: #8cc3b2;
+}
+
+.planCard h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.planCard p {
+  min-height: 48px;
+  margin: 0;
+  color: #5f6f6b;
+  line-height: 1.5;
+}
+
+.price {
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .layout,
+  .plans,
+  .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .intro {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .page {
+    padding: 16px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .styleGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -2,14 +2,14 @@ genre_id: scary_stories
 display_name: Scary Stories
 word_count_min: 80
 word_count_max: 130
-tone: slow dread, unsettling, cinematic, specific details
+tone: Slow dread with grounded details, a clear mystery, and a final reveal.
 layout: full_image
 caption_preset: horror_red
-voice_rate: 0.88
-music_mood: eerie
+voice_rate: 0.96
+music_mood: dark ambient
 hook_patterns:
-  - "At {time}, {subject} moved by itself."
-  - "You heard {sound}. Then it answered."
+  - At {time}, {subject} noticed {detail}.
+  - The first warning was {detail}.
 banned_phrases:
-  - "Hey guys"
-  - "Like and subscribe"
+  - like and subscribe
+  - you won't believe

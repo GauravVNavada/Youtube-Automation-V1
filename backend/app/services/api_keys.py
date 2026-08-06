@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+import hashlib
 from typing import Any
 
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ PROVIDER_ENV_KEYS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "pexels": "PEXELS_API_KEY",
     "pixabay": "PIXABAY_API_KEY",
+    "unsplash": "UNSPLASH_ACCESS_KEY",
     "google_tts": "GOOGLE_TTS_CREDENTIALS",
 }
 
@@ -101,16 +104,29 @@ def llm_options() -> list[dict[str, Any]]:
 
 
 def _encode(value: str) -> str:
-    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii") if value else ""
+    if not value:
+        return ""
+    token = _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+    return f"fernet:{token}"
 
 
 def _decode(value: str) -> str:
     if not value:
         return ""
+    if value.startswith("fernet:"):
+        try:
+            return _fernet().decrypt(value.removeprefix("fernet:").encode("ascii")).decode("utf-8")
+        except (InvalidToken, ValueError):
+            return ""
     try:
         return base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
     except Exception:
         return ""
+
+
+def _fernet() -> Fernet:
+    digest = hashlib.sha256(get_settings().jwt_secret.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
 
 
 def _settings_value(settings, provider: str) -> str:
@@ -121,6 +137,7 @@ def _settings_value(settings, provider: str) -> str:
         "anthropic": settings.anthropic_api_key,
         "pexels": settings.pexels_api_key,
         "pixabay": settings.pixabay_api_key,
+        "unsplash": settings.unsplash_access_key,
         "google_tts": settings.google_tts_credentials,
     }.get(provider, "")
 

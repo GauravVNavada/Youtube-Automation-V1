@@ -14,16 +14,20 @@ import threading
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 
-from app.core.config import get_settings
+try:
+    from app.core.config import get_settings
+except ModuleNotFoundError:
+    from backend.app.core.config import get_settings
 
 
 router = APIRouter(prefix="/playground", tags=["playground"])
 
-RUN_SCHEMA_VERSION = 3
+RUN_SCHEMA_VERSION = 7
 TERMINAL_STATUSES = {"succeeded", "failed", "skipped"}
 VALID_STAGE_STATUSES = {"queued", "running", "succeeded", "failed", "skipped"}
 _RUN_LOCK = threading.RLock()
@@ -38,14 +42,46 @@ class PlaygroundRunCreate(BaseModel):
     llm_provider: str = "env"
     llm_model: str = ""
     llm_api_key: str = ""
+    parent_run_id: str = ""
+    start_new_thread: bool = False
+    music_path: str = ""
+    chat_history: list[dict[str, Any]] = Field(default_factory=list)
+    rerun_stage_id: str = ""
+    forced_agent_instructions: dict[str, str] = Field(default_factory=dict)
+    settings_patch: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaygroundStageRerunRequest(BaseModel):
+    message: str = ""
+    music_path: str = ""
+    settings_patch: dict[str, Any] = Field(default_factory=dict)
+    forced_agent_instructions: dict[str, str] = Field(default_factory=dict)
 
 
 VISIBLE_STAGES: list[dict[str, str]] = [
     {
+        "id": "desktop_master_agent",
+        "agent_name": "desktop_master_agent",
+        "execution_mode": "ai",
+        "prompt_text": "Read the chat context and decide whether this is new generation, calibration, or an edit/remake request.",
+    },
+    {
+        "id": "style_sampler_agent",
+        "agent_name": "style_sampler_agent",
+        "execution_mode": "ai",
+        "prompt_text": "Create three calibration style profiles when the desktop onboarding flow asks for samples.",
+    },
+    {
+        "id": "parameter_agent",
+        "agent_name": "parameter_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Map follow-up feedback into settings patches and target pipeline-agent repair notes.",
+    },
+    {
         "id": "master_agent",
         "agent_name": "master_agent",
         "execution_mode": "deterministic",
-        "prompt_text": "Prepare the playground run, validate inputs, and start the shared pipeline.",
+        "prompt_text": "Prepare the playground run, validate inputs, and start the shared final pipeline.",
     },
     {
         "id": "topic_discovery_agent",
@@ -66,10 +102,10 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "prompt_text": "Write a clear, grounded short script with simple words, alert beats, and a complete ending.",
     },
     {
-        "id": "asset_agent",
-        "agent_name": "asset_agent",
+        "id": "validation_agent",
+        "agent_name": "validation_agent",
         "execution_mode": "hybrid",
-        "prompt_text": "Fetch or generate varied visuals. Use fallback images instead of repeating bad or missing assets.",
+        "prompt_text": "Validate each pipeline artifact, then send repair notes back to the responsible agent when needed.",
     },
     {
         "id": "audio_agent",
@@ -84,10 +120,28 @@ VISIBLE_STAGES: list[dict[str, str]] = [
         "prompt_text": "Build readable timed captions from word timestamps.",
     },
     {
+        "id": "timed_visual_agent",
+        "agent_name": "timed_visual_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Merge caption timing into visual windows and rewrite them into concrete asset searches.",
+    },
+    {
+        "id": "asset_agent",
+        "agent_name": "asset_agent",
+        "execution_mode": "hybrid",
+        "prompt_text": "Fetch videos and images for each timed visual cue, then select the best non-repeating asset.",
+    },
+    {
+        "id": "music_agent",
+        "agent_name": "music_agent",
+        "execution_mode": "deterministic",
+        "prompt_text": "Mix uploaded music and resolved SFX under clean narration, or skip when no audio layers are selected.",
+    },
+    {
         "id": "render_agent",
         "agent_name": "render_agent",
         "execution_mode": "deterministic",
-        "prompt_text": "Render a vertical MP4 from visuals, narration, captions, and optional music.",
+        "prompt_text": "Render a vertical MP4 from visuals, final audio, and captions.",
     },
     {
         "id": "thumbnail_agent",
@@ -111,38 +165,76 @@ PIPELINE_STAGE_TO_VISIBLE = {
     "topic_discovery_agent": "topic_discovery_agent",
     "research_agent": "research_agent",
     "script_agent": "script_agent",
-    "validate_script": "script_agent",
-    "validate_script_result": "script_agent",
-    "asset_agent": "asset_agent",
-    "validate_assets": "asset_agent",
-    "validate_assets_result": "asset_agent",
+    "validate_script": "validation_agent",
+    "validate_script_result": "validation_agent",
+    "validation_agent": "validation_agent",
     "audio_agent": "audio_agent",
-    "validate_audio": "audio_agent",
-    "validate_audio_result": "audio_agent",
+    "validate_audio": "validation_agent",
+    "validate_audio_result": "validation_agent",
     "caption_agent": "caption_agent",
-    "validate_captions": "caption_agent",
-    "validate_captions_result": "caption_agent",
+    "validate_captions": "validation_agent",
+    "validate_captions_result": "validation_agent",
+    "timed_visual_agent": "timed_visual_agent",
+    "asset_agent": "asset_agent",
+    "validate_assets": "validation_agent",
+    "validate_assets_result": "validation_agent",
+    "music_agent": "music_agent",
     "render_agent": "render_agent",
-    "validate_render": "render_agent",
-    "validate_render_result": "render_agent",
+    "validate_render": "validation_agent",
+    "validate_render_result": "validation_agent",
     "thumbnail_agent": "thumbnail_agent",
 }
 
 STDOUT_STAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^\[validation\]", re.I), "validation_agent"),
+    (re.compile(r"^\[repair\].*script_agent", re.I), "script_agent"),
+    (re.compile(r"^\[repair\].*audio_agent", re.I), "audio_agent"),
+    (re.compile(r"^\[repair\].*caption_agent", re.I), "caption_agent"),
+    (re.compile(r"^\[repair\].*asset_agent", re.I), "asset_agent"),
+    (re.compile(r"^\[repair\].*render_agent", re.I), "render_agent"),
     (re.compile(r"Discovering grounded angle", re.I), "topic_discovery_agent"),
     (re.compile(r"Building research brief", re.I), "research_agent"),
     (re.compile(r"Generating script", re.I), "script_agent"),
-    (re.compile(r"Fetching assets", re.I), "asset_agent"),
     (re.compile(r"Generating audio", re.I), "audio_agent"),
     (re.compile(r"Building captions", re.I), "caption_agent"),
+    (re.compile(r"Building timed visual cues", re.I), "timed_visual_agent"),
+    (re.compile(r"Fetching assets", re.I), "asset_agent"),
+    (re.compile(r"Preparing music/SFX mix|Preparing music mix", re.I), "music_agent"),
     (re.compile(r"Rendering video", re.I), "render_agent"),
     (re.compile(r"Generating thumbnails", re.I), "thumbnail_agent"),
 )
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+DEFAULT_PLAYGROUND_SETTINGS: dict[str, Any] = {
+    "voice_speed": 1.0,
+    "caption_words": 4,
+    "image_count": 8,
+    "music_volume": 0.12,
+    "min_visual_segment_ms": 3500,
+    "visual_motion": True,
+    "transition_style": "slide",
+    "transition_seconds": 0.45,
+    "zoom_variant": "mixed",
+    "music_path": "",
+}
+
+TRANSITION_STYLES = {"slide", "fade", "wipe", "cut"}
+ZOOM_VARIANTS = {"mixed", "center_in", "center_out", "still"}
+ALLOWED_MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+MAX_MUSIC_UPLOAD_MB = _positive_int_env("PLAYGROUND_MAX_MUSIC_UPLOAD_MB", 300)
+MAX_MUSIC_UPLOAD_BYTES = MAX_MUSIC_UPLOAD_MB * 1024 * 1024
+
+
 def _project_root() -> Path:
     for parent in Path(__file__).resolve().parents:
-        if (parent / "pipeline" / "main.py").exists():
+        if (parent / "final_pipeline" / "main.py").exists():
             return parent
     return Path(__file__).resolve().parents[3]
 
@@ -151,7 +243,7 @@ def _pipeline_root() -> Path:
     configured = os.getenv("PLAYGROUND_PIPELINE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return _project_root() / "pipeline"
+    return _project_root() / "final_pipeline"
 
 
 def _pipeline_data_dir() -> Path:
@@ -168,11 +260,32 @@ def _runs_dir() -> Path:
     return _project_root() / "playground" / "data" / "runs"
 
 
+def _playground_music_upload_dir() -> Path:
+    return _runs_dir() / "_uploads" / "music"
+
+
+def _legacy_runs_dir() -> Path:
+    return _project_root() / "playground" / "data" / "runs"
+
+
+def _all_runs_dirs() -> list[Path]:
+    roots: list[Path] = []
+    for path in (_runs_dir(), _legacy_runs_dir()):
+        resolved = path.expanduser().resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
 def _pipeline_output_runs_dir() -> Path:
     configured = os.getenv("PLAYGROUND_PIPELINE_RUNS_DIR", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     return _runs_dir() / "_pipeline_outputs"
+
+
+def _legacy_pipeline_output_runs_dir() -> Path:
+    return _legacy_runs_dir() / "_pipeline_outputs"
 
 
 def _ensure_pipeline_import_path() -> None:
@@ -196,35 +309,145 @@ def _render_prompt_module(module_name: str, fallback: str) -> str:
 
 
 def _prompt_text_for_stage(stage_id: str, fallback: str = "") -> str:
+    if stage_id == "desktop_master_agent":
+        return _desktop_agent_prompt_text("master_agent", "Desktop Master Agent") or fallback
+    if stage_id == "style_sampler_agent":
+        return _desktop_agent_prompt_text("style_sampler_agent", "Desktop Style Sampler Agent") or fallback
+    if stage_id == "parameter_agent":
+        return _desktop_agent_prompt_text("parameter_agent", "Desktop Parameter Agent") or fallback
     if stage_id == "script_agent":
         return _render_prompt_module("agents.prompts.script_prompts", fallback)
     if stage_id == "asset_agent":
         return _render_prompt_module("agents.prompts.asset_prompts", fallback)
+    if stage_id == "validation_agent":
+        return _render_prompt_module("agents.prompts.validation_prompts", fallback)
     if stage_id == "master_agent":
         master_prompt = _render_prompt_module("agents.prompts.master_prompts", "")
+        desktop_prompt = _desktop_agent_prompt_text()
         if master_prompt:
             return (
                 "Playground bootstrap is deterministic, so no LLM prompt is sent for this stage.\n\n"
                 "Prompt-based master planning module available:\n\n"
                 f"{master_prompt}"
+                f"{desktop_prompt}"
             )
+        if desktop_prompt:
+            return f"{fallback}{desktop_prompt}"
     if stage_id in {"audio_agent", "caption_agent", "render_agent", "thumbnail_agent", "final_output"}:
         return f"{fallback}\n\nThis stage is deterministic or provider-specific and does not send an agent prompt."
+    if stage_id == "timed_visual_agent":
+        return f"{fallback}\n\nThis stage uses deterministic caption timing plus one best-effort batch LLM rewrite."
     if stage_id in {"topic_discovery_agent", "research_agent"}:
         return f"{fallback}\n\nThis stage uses deterministic grounding/research helpers plus source lookups, not an agents/prompts LLM prompt."
     return fallback
+
+
+def _desktop_agent_prompt_text(only_module: str = "", only_title: str = "") -> str:
+    sections = []
+    try:
+        from desktop_pipeline.message_base import render_messages_for_single_prompt
+        from desktop_pipeline import master_agent, parameter_agent, style_sampler_agent
+
+        modules = (
+            ("Desktop Master Agent", master_agent),
+            ("Desktop Style Sampler Agent", style_sampler_agent),
+            ("Desktop Parameter Agent", parameter_agent),
+        )
+        if only_module:
+            modules = tuple((title, module) for title, module in modules if module.__name__.rsplit(".", 1)[-1] == only_module)
+        for title, module in modules:
+            display_title = only_title or title
+            if hasattr(module, "messages_base"):
+                sections.append(f"\n\n--- {display_title} Examples ---\n\n{render_messages_for_single_prompt(module.messages_base())}")
+    except Exception as exc:
+        sections.append(f"\n\nDesktop agent examples could not be loaded: {type(exc).__name__}: {exc}")
+    return "".join(sections)
 
 
 def _run_path(run_id: str) -> Path:
     return _runs_dir() / f"{run_id}.json"
 
 
+def _existing_run_path(run_id: str) -> Path:
+    for root in _all_runs_dirs():
+        path = root / f"{run_id}.json"
+        if path.exists():
+            return path
+    return _run_path(run_id)
+
+
 def _run_workspace(run_id: str) -> Path:
     return _runs_dir() / run_id
 
 
+def _database_module():
+    try:
+        from app.core import database
+    except ModuleNotFoundError:
+        from backend.app.core import database
+    return database
+
+
+def _models_module():
+    try:
+        from app import models
+    except ModuleNotFoundError:
+        from backend.app import models
+    return models
+
+
+def _asset_catalog():
+    try:
+        from app.services import static_asset_catalog
+    except ModuleNotFoundError:
+        from backend.app.services import static_asset_catalog
+    return static_asset_catalog
+
+
+def _static_session():
+    return _database_module().StaticSessionLocal()
+
+
+def _playground_session():
+    return _database_module().PlaygroundSessionLocal()
+
+
+def _static_genres_from_db() -> list[dict[str, Any]]:
+    try:
+        models = _models_module()
+        with _static_session() as db:
+            rows = db.scalars(
+                select(models.Genre)
+                .where(models.Genre.is_active.is_(True))
+                .order_by(models.Genre.recommended_score.desc(), models.Genre.display_name.asc())
+            ).all()
+            return [
+                {
+                    "genre_id": row.id,
+                    "display_name": row.display_name,
+                    "category": row.category,
+                    "tone": row.tone,
+                    "default_duration_sec": row.default_duration_sec,
+                    "word_count_min": row.word_count_min,
+                    "word_count_max": row.word_count_max,
+                    "music_mood": row.music_mood,
+                    "hook_patterns": row.hook_patterns or [],
+                    "banned_phrases": row.banned_phrases or [],
+                    "visual_style": row.visual_style or {},
+                    "topic_rules": row.topic_rules or [],
+                    "script_profile": (row.metadata_json or {}).get("script_profile", {}),
+                }
+                for row in rows
+            ]
+    except Exception:
+        return []
+
+
 @router.get("/genres")
 def list_genres() -> list[dict[str, Any]]:
+    db_genres = _static_genres_from_db()
+    if db_genres:
+        return db_genres
     genres_dir = _pipeline_data_dir() / "genres"
     if not genres_dir.exists():
         return []
@@ -240,39 +463,92 @@ def list_genres() -> list[dict[str, Any]]:
     return genres
 
 
+@router.get("/music")
+def list_music() -> list[dict[str, Any]]:
+    try:
+        with _static_session() as db:
+            return _asset_catalog().list_music_assets(db)
+    except Exception:
+        return []
+
+
 @router.get("/llm-options")
 def list_llm_options() -> list[dict[str, Any]]:
     settings = get_settings()
     return [
         {"provider": "env", "label": "Docker / .env", "models": [], "default_model": ""},
         {"provider": "gemini", "label": "Google Gemini", "models": [settings.gemini_model], "default_model": settings.gemini_model},
-        {"provider": "groq", "label": "Groq", "models": [settings.groq_model], "default_model": settings.groq_model},
-        {"provider": "openai", "label": "OpenAI", "models": [settings.llm_model or "gpt-4o-mini"], "default_model": settings.llm_model or "gpt-4o-mini"},
-        {"provider": "anthropic", "label": "Anthropic", "models": [settings.anthropic_model], "default_model": settings.anthropic_model},
-        {"provider": "offline", "label": "Offline fallback", "models": ["local-template"], "default_model": "local-template"},
     ]
+
+
+@router.post("/music")
+def upload_music(file: UploadFile = File(...)) -> dict[str, Any]:
+    with _static_session() as db:
+        return _asset_catalog().upload_music_asset(db, file)
+
+
+@router.delete("/music/{asset_id}")
+def delete_music(asset_id: str) -> dict[str, Any]:
+    with _static_session() as db:
+        return _asset_catalog().delete_music_asset(db, asset_id)
+
+
+@router.get("/music/{asset_id}/file")
+def get_music_file(asset_id: str) -> FileResponse:
+    with _static_session() as db:
+        return _asset_catalog().music_file_response(db, asset_id)
+
+
+@router.post("/music/uploads")
+def upload_playground_music(file: UploadFile = File(...)) -> dict[str, Any]:
+    path, size = _save_playground_music_upload(file)
+    upload_id = path.stem
+    return {
+        "id": upload_id,
+        "name": _display_stage_name(path.stem.rsplit("-", 1)[0]),
+        "filename": path.name,
+        "source": "playground_upload",
+        "music_path": str(path),
+        "url": f"/api/playground/music/uploads/{upload_id}/file",
+        "size_bytes": size,
+    }
+
+
+@router.get("/music/uploads/{upload_id}/file")
+def get_playground_music_file(upload_id: str) -> FileResponse:
+    path = _playground_music_upload_path(upload_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Uploaded music not found")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @router.get("/runs")
 def list_runs() -> list[dict[str, Any]]:
     _runs_dir().mkdir(parents=True, exist_ok=True)
-    runs: list[dict[str, Any]] = []
-    paths = sorted(_runs_dir().glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    runs_by_id: dict[str, dict[str, Any]] = {}
+    for run in _list_runs_from_db():
+        runs_by_id[str(run.get("id") or "")] = run
+    paths = sorted(
+        (path for root in _all_runs_dirs() for path in root.glob("*.json")),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
     for path in paths:
         try:
-            runs.append(_read_run(path))
+            run = _read_run(path)
+            runs_by_id[str(run["id"])] = {
+                "id": run["id"],
+                "user_message": run.get("user_message", ""),
+                "status": run.get("status", "failed"),
+                "created_at": run.get("created_at", ""),
+                "updated_at": run.get("updated_at", ""),
+            }
         except Exception as exc:
-            runs.append(_broken_run_summary(path, exc))
-    return [
-        {
-            "id": run["id"],
-            "user_message": run.get("user_message", ""),
-            "status": run.get("status", "failed"),
-            "created_at": run.get("created_at", ""),
-            "updated_at": run.get("updated_at", ""),
-        }
-        for run in runs[:50]
-    ]
+            broken = _broken_run_summary(path, exc)
+            runs_by_id[str(broken["id"])] = broken
+    runs = sorted(runs_by_id.values(), key=lambda run: str(run.get("updated_at") or run.get("created_at") or ""), reverse=True)
+    return runs[:50]
 
 
 @router.post("/runs")
@@ -290,9 +566,76 @@ def create_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     return _read_run(_run_path(run["id"]))
 
 
+@router.post("/runs/{run_id}/stages/{stage_id}/rerun")
+def rerun_stage(run_id: str, stage_id: str, request: PlaygroundStageRerunRequest | None = None) -> dict[str, Any]:
+    request = request or PlaygroundStageRerunRequest()
+    parent = get_run(run_id)
+    stage = _stage_by_id(parent, stage_id)
+    if str(parent.get("status") or "") not in TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="Wait for the current run to finish before rerunning a node.")
+
+    target_agent = _target_agent_for_rerun(stage_id)
+    stage_name = _display_stage_name(stage.get("agent_name") or stage_id)
+    source_prompt = _source_prompt_from_parent(parent) or str(parent.get("effective_message") or parent.get("user_message") or "")
+    message = request.message.strip() or f"Rerun the {stage_name} node for the existing video."
+    instruction = (
+        f"Rerun the {stage_name} stage for the existing video. Preserve the original topic, duration, genre, "
+        "and every unrelated stage decision unless this node requires a dependent artifact to be rebuilt."
+    )
+    option_instruction = _stage_option_instruction(stage_id, request.settings_patch, request.forced_agent_instructions)
+    if option_instruction:
+        instruction = f"{instruction} {option_instruction}"
+    forced_instructions = {target_agent: instruction}
+    forced_instructions.update(
+        {
+            str(agent): str(text)
+            for agent, text in (request.forced_agent_instructions or {}).items()
+            if str(agent).strip() and str(text).strip()
+        }
+    )
+    notes = "\n".join(
+        part
+        for part in (
+            str(parent.get("notes") or "").strip(),
+            f"NODE RERUN REQUEST: {instruction}",
+            f"Previous run id: {parent.get('id', run_id)}",
+            f"Previous stage status: {stage.get('status', '')}",
+        )
+        if part
+    )
+    payload = PlaygroundRunCreate(
+        message=message,
+        genre_id=str(parent.get("genre_id") or "scary_stories"),
+        duration=int(parent.get("duration") or 30),
+        notes=notes,
+        llm_provider=str(parent.get("llm_provider") or "env"),
+        llm_model=str(parent.get("llm_model") or ""),
+        parent_run_id=str(parent.get("id") or run_id),
+        music_path=_valid_music_path(request.music_path),
+        chat_history=list(parent.get("chat_history") or []),
+        rerun_stage_id=stage_id,
+        forced_agent_instructions=forced_instructions,
+        settings_patch=_clean_settings_patch(request.settings_patch),
+    )
+    if source_prompt:
+        payload = payload.model_copy(update={"message": f"{message} Keep the original topic: {source_prompt}"})
+    return create_run(payload)
+
+
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
-    path = _run_path(run_id)
+    db_run = _read_run_from_db(run_id)
+    if db_run is not None:
+        path = _existing_run_path(run_id)
+        if path.exists():
+            return _read_run(path)
+        _refresh_run_from_pipeline_files(db_run)
+        if db_run.get("status") in TERMINAL_STATUSES:
+            final = _stage_by_id(db_run, "final_output")
+            final["output_json"].update(_final_output_json(db_run))
+            final["artifacts"] = _collect_final_artifacts(db_run)
+        return _with_thread_runs(db_run)
+    path = _existing_run_path(run_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Playground run not found")
     return _read_run(path)
@@ -317,21 +660,683 @@ def get_artifact(artifact_id: str):
     return FileResponse(decoded)
 
 
+def _playground_route(payload: PlaygroundRunCreate) -> dict[str, Any]:
+    parent = {} if payload.start_new_thread else _parent_run_context(payload.parent_run_id)
+    current_settings = _current_settings_from_parent(parent, payload)
+    parameter_patch, edit_like = _parameter_feedback(payload.message, current_settings)
+    should_attach_latest = (
+        not payload.start_new_thread
+        and not parent
+        and _should_attach_latest_parent(payload.message, parameter_patch, edit_like)
+    )
+    if should_attach_latest:
+        parent = _latest_run_context()
+        if parent:
+            current_settings = _current_settings_from_parent(parent, payload)
+            parameter_patch, edit_like = _parameter_feedback(payload.message, current_settings)
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="This looks like a follow-up, but no active parent run was provided. Select the previous run or start a new chat with a full video topic.",
+            )
+    forced_instructions = {
+        str(agent): str(text)
+        for agent, text in (payload.forced_agent_instructions or {}).items()
+        if str(agent).strip() and str(text).strip()
+    }
+    forced_target = _target_agent_for_rerun(payload.rerun_stage_id) if payload.rerun_stage_id else ""
+    is_followup = bool(
+        not payload.start_new_thread
+        and parent
+        and (forced_target or _should_use_parent_context(payload.message, parameter_patch, edit_like))
+    )
+    settings_patch = dict(parameter_patch.get("settings_patch") or {}) if is_followup else {}
+    manual_settings_patch = _clean_settings_patch(payload.settings_patch)
+    if is_followup and manual_settings_patch:
+        settings_patch.update(manual_settings_patch)
+    settings_patch.update(_settings_from_text(payload.message))
+    agent_instructions = dict(parameter_patch.get("agent_instructions") or {}) if is_followup else {}
+    target_agent = str(parameter_patch.get("target_agent") or "")
+    if forced_target:
+        target_agent = forced_target
+    if forced_instructions:
+        agent_instructions.update(forced_instructions)
+
+    music_path = _valid_music_path(payload.music_path)
+    if not music_path and is_followup:
+        music_path = _valid_music_path(str((parent.get("settings") or {}).get("music_path") or ""))
+
+    if is_followup and not target_agent:
+        target_agent = _target_agent_for_settings(settings_patch, music_path)
+
+    if is_followup and not settings_patch and not agent_instructions and not target_agent:
+        target_agent = "script_agent"
+        agent_instructions["script_agent"] = (
+            "Apply the user's follow-up feedback to the script while preserving the original source prompt and named subject. "
+            "Do not treat the follow-up complaint as a new video topic."
+        )
+
+    source_prompt = _source_prompt_from_parent(parent) if is_followup else _strip_duration_instruction(payload.message)
+    source_prompt = source_prompt or _strip_duration_instruction(payload.message)
+    effective_duration = _safe_duration(int(
+        settings_patch.get("duration")
+        or _duration_from_text(payload.message)
+        or (parent.get("duration") if is_followup else None)
+        or _safe_duration(payload.duration)
+    ))
+    notes = _route_notes(payload, parent, is_followup, agent_instructions)
+    feedback = _strip_duration_instruction(payload.message) or payload.message
+    display_message = f"Fix: {_clip(feedback, 90)} -> {_clip(source_prompt, 90)}" if is_followup else source_prompt
+    genre = _genre_for(payload.genre_id)
+    route_summary = (
+        f"{genre['display_name']} remake for: {source_prompt}"
+        if is_followup
+        else f"{genre['display_name']} pipeline run for: {source_prompt}"
+    )
+    repair_notes = [
+        f"Original prompt: {source_prompt}",
+        f"User follow-up feedback: {feedback}",
+    ] if is_followup else []
+    if target_agent:
+        repair_notes.append(f"Target agent: {target_agent}")
+    rerun_stage_id = payload.rerun_stage_id if forced_target else _stage_id_for_target_agent(target_agent)
+    return {
+        "intent": "edit_video" if is_followup else "new_video",
+        "is_followup": is_followup,
+        "parent_run_id": str(parent.get("id") or "") if is_followup else "",
+        "rerun_stage_id": rerun_stage_id if is_followup else "",
+        "effective_message": source_prompt,
+        "source_prompt": source_prompt,
+        "display_message": display_message,
+        "effective_duration": effective_duration,
+        "notes": notes,
+        "target_agent": target_agent,
+        "settings_patch": settings_patch,
+        "music_path": music_path,
+        "agent_instructions": agent_instructions,
+        "repair_notes": repair_notes,
+        "route_summary": route_summary,
+        "start_new_thread": bool(payload.start_new_thread),
+    }
+
+
+def _route_parent_context(route: dict[str, Any], payload: PlaygroundRunCreate) -> dict[str, Any]:
+    if payload.start_new_thread:
+        return {}
+    return _parent_run_context(str(route.get("parent_run_id") or payload.parent_run_id))
+
+
+def _target_agent_for_rerun(stage_id: str) -> str:
+    stage_id = str(stage_id or "").strip()
+    if stage_id in {
+        "topic_discovery_agent",
+        "research_agent",
+        "script_agent",
+        "audio_agent",
+        "caption_agent",
+        "timed_visual_agent",
+        "asset_agent",
+        "music_agent",
+        "render_agent",
+        "thumbnail_agent",
+    }:
+        return stage_id
+    if stage_id == "validation_agent":
+        return "validation_agent"
+    return "master_agent"
+
+
+def _stage_id_for_target_agent(target_agent: str) -> str:
+    target = str(target_agent or "").strip()
+    if target in {
+        "topic_discovery_agent",
+        "research_agent",
+        "script_agent",
+        "audio_agent",
+        "caption_agent",
+        "timed_visual_agent",
+        "asset_agent",
+        "music_agent",
+        "render_agent",
+        "thumbnail_agent",
+        "validation_agent",
+    }:
+        return target
+    return ""
+
+
+def _target_agent_for_settings(settings_patch: dict[str, Any], music_path: str = "") -> str:
+    settings = _clean_settings_patch(settings_patch)
+    keys = set(settings)
+    if "duration" in keys:
+        return "script_agent"
+    if "voice_speed" in keys:
+        return "audio_agent"
+    if "caption_words" in keys:
+        return "caption_agent"
+    if keys.intersection({"image_count", "min_visual_segment_ms"}):
+        return "timed_visual_agent"
+    if music_path or keys.intersection({"music_volume"}):
+        return "music_agent"
+    if keys.intersection({"visual_motion", "transition_style", "transition_seconds", "zoom_variant"}):
+        return "render_agent"
+    return ""
+
+
+def _stage_option_instruction(
+    stage_id: str,
+    settings_patch: dict[str, Any],
+    forced_agent_instructions: dict[str, str],
+) -> str:
+    settings = _clean_settings_patch(settings_patch)
+    bits: list[str] = []
+    if settings:
+        rendered = ", ".join(f"{key}={value}" for key, value in settings.items())
+        bits.append(f"Apply these playground options: {rendered}.")
+    extra = "; ".join(str(text).strip() for text in (forced_agent_instructions or {}).values() if str(text).strip())
+    if extra:
+        bits.append(f"Additional node instruction: {extra}")
+    if stage_id == "render_agent" and any(key in settings for key in {"visual_motion", "transition_style", "transition_seconds", "zoom_variant"}):
+        bits.append("Use the selected render animation settings during the FFmpeg render.")
+    return " ".join(bits)
+
+
+def _clean_settings_patch(settings_patch: dict[str, Any] | None) -> dict[str, Any]:
+    source = settings_patch if isinstance(settings_patch, dict) else {}
+    cleaned: dict[str, Any] = {}
+    if "duration" in source:
+        cleaned["duration"] = _safe_duration(int(_clamp_int(source.get("duration"), 30, 30, 60)))
+    if "voice_speed" in source:
+        cleaned["voice_speed"] = round(_clamp_float(source.get("voice_speed"), 1.0, 0.65, 1.4), 2)
+    if "caption_words" in source:
+        cleaned["caption_words"] = int(_clamp_int(source.get("caption_words"), 4, 1, 8))
+    if "image_count" in source:
+        cleaned["image_count"] = int(_clamp_int(source.get("image_count"), 8, 1, 24))
+    if "music_volume" in source:
+        cleaned["music_volume"] = round(_clamp_float(source.get("music_volume"), 0.12, 0.0, 0.8), 2)
+    if "min_visual_segment_ms" in source:
+        cleaned["min_visual_segment_ms"] = int(_clamp_int(source.get("min_visual_segment_ms"), 3500, 1200, 8000))
+    if "visual_motion" in source:
+        cleaned["visual_motion"] = _as_bool(source.get("visual_motion"), True)
+    if "transition_style" in source:
+        style = str(source.get("transition_style") or "").strip().lower()
+        aliases = {"slides": "slide", "none": "cut", "off": "cut"}
+        cleaned["transition_style"] = aliases.get(style, style) if aliases.get(style, style) in TRANSITION_STYLES else "slide"
+    if "transition_seconds" in source:
+        cleaned["transition_seconds"] = round(_clamp_float(source.get("transition_seconds"), 0.45, 0.0, 1.2), 2)
+    if "zoom_variant" in source:
+        variant = str(source.get("zoom_variant") or "").strip().lower()
+        aliases = {"alternate": "mixed", "center": "mixed", "in": "center_in", "out": "center_out", "none": "still", "off": "still"}
+        cleaned["zoom_variant"] = aliases.get(variant, variant) if aliases.get(variant, variant) in ZOOM_VARIANTS else "mixed"
+    if cleaned.get("visual_motion") is False and "zoom_variant" not in cleaned:
+        cleaned["zoom_variant"] = "still"
+    return cleaned
+
+
+def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _display_stage_name(value: str) -> str:
+    return str(value or "").replace("_", " ").strip().title() or "Selected"
+
+
+def _parameter_feedback(message: str, current_settings: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    fallback_patch = _fallback_parameter_patch(message)
+    fallback_edit_like = _looks_like_edit_text(message)
+    try:
+        _ensure_pipeline_import_path()
+        from desktop_pipeline.parameter_agent import looks_like_edit_request, map_parameter_request
+
+        patch = map_parameter_request(message, current_settings).to_dict()
+        edit_like = bool(looks_like_edit_request(message))
+        return patch, edit_like or bool(patch.get("settings_patch") or patch.get("agent_instructions") or patch.get("target_agent"))
+    except Exception:
+        return fallback_patch, fallback_edit_like or bool(fallback_patch.get("agent_instructions"))
+
+
+def _should_use_parent_context(message: str, parameter_patch: dict[str, Any], edit_like: bool) -> bool:
+    if parameter_patch.get("settings_patch") or parameter_patch.get("agent_instructions") or parameter_patch.get("target_agent"):
+        return True
+    if _looks_like_new_video_request(message):
+        return False
+    return True
+
+
+def _should_attach_latest_parent(message: str, parameter_patch: dict[str, Any], edit_like: bool) -> bool:
+    if _looks_like_new_video_request(message):
+        return False
+    if parameter_patch.get("agent_instructions") or parameter_patch.get("target_agent"):
+        return True
+    text = " ".join(str(message or "").lower().split())
+    if re.search(r"\b(?:it|this|that|same|previous|current|again)\b", text):
+        return True
+    return edit_like
+
+
+def _looks_like_new_video_request(message: str) -> bool:
+    text = " ".join(str(message or "").lower().split())
+    return bool(
+        re.search(r"\b(?:make|create|generate)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:video|short|reel)\s+(?:on|about|for)\b", text)
+        or re.search(r"\b(?:video|short|reel)\s+(?:on|about)\b", text)
+    )
+
+
+def _fallback_parameter_patch(message: str) -> dict[str, Any]:
+    text = " ".join(str(message or "").lower().split())
+    if _mentions_any(text, "script", "story", "narration", "hook", "writing", "plot", "content") and _mentions_any(
+        text,
+        "bad",
+        "wrong",
+        "random",
+        "unusual",
+        "weird",
+        "generic",
+        "boring",
+        "better",
+        "improve",
+        "not good",
+        "look good",
+        "doesnt",
+        "doesn't",
+        "does not",
+        "off topic",
+        "unrelated",
+    ):
+        return {
+            "target_agent": "script_agent",
+            "settings_patch": {},
+            "agent_instructions": {
+                "script_agent": (
+                    "Regenerate the script around the original source prompt. Keep the same named subject, "
+                    "remove random or unrelated beats, and use a fresh coherent angle."
+                )
+            },
+            "reason": "script quality or topic alignment needs repair",
+        }
+    return {"target_agent": "", "settings_patch": {}, "agent_instructions": {}, "reason": ""}
+
+
+def _looks_like_edit_text(message: str) -> bool:
+    text = " ".join(str(message or "").lower().split())
+    return _mentions_any(
+        text,
+        "change",
+        "fix",
+        "remake",
+        "redo",
+        "again",
+        "too",
+        "less",
+        "more",
+        "faster",
+        "slower",
+        "loud",
+        "quiet",
+        "bad",
+        "wrong",
+        "not good",
+        "same",
+        "repeat",
+        "random",
+        "unusual",
+        "weird",
+        "generic",
+        "boring",
+        "better",
+        "improve",
+        "off topic",
+        "doesnt",
+        "doesn't",
+    )
+
+
+def _mentions_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _parent_run_context(run_id: str) -> dict[str, Any]:
+    run_id = str(run_id or "").strip()
+    if not run_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,90}", run_id):
+        return {}
+    path = _existing_run_path(run_id)
+    if path.exists():
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            return run if isinstance(run, dict) else {}
+        except Exception:
+            return {}
+    run = _read_run_from_db(run_id)
+    return run or {}
+
+
+def _latest_run_context() -> dict[str, Any]:
+    paths = sorted(
+        (path for root in _all_runs_dirs() for path in root.glob("*.json")),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for path in paths:
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            if isinstance(run, dict) and run.get("id"):
+                return run
+        except Exception:
+            continue
+    for run in _list_runs_from_db():
+        if run.get("id"):
+            return run
+    return {}
+
+
+def _current_settings_from_parent(parent: dict[str, Any], payload: PlaygroundRunCreate) -> dict[str, Any]:
+    settings = dict(DEFAULT_PLAYGROUND_SETTINGS)
+    settings["duration"] = parent.get("duration") or payload.duration
+    for source in (parent.get("settings") or {}, parent.get("settings_patch") or {}):
+        if isinstance(source, dict):
+            settings.update(_clean_settings_patch(source))
+            if source.get("duration") is not None:
+                settings["duration"] = source.get("duration")
+            if source.get("music_path"):
+                settings["music_path"] = _valid_music_path(str(source.get("music_path") or ""))
+    if payload.music_path:
+        settings["music_path"] = _valid_music_path(payload.music_path)
+    return settings
+
+
+def _valid_music_path(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    path = _resolve_existing_path(Path(raw))
+    if not path.exists():
+        try:
+            path = _asset_catalog()._resolve_catalog_path(raw)
+        except Exception:
+            pass
+    allowed_roots = [
+        (_pipeline_data_dir() / "assets" / "music").expanduser().resolve(),
+        _playground_music_upload_dir().expanduser().resolve(),
+    ]
+    for env_name in ("MODULARSHORTS_DATA_DIR", "PLAYGROUND_PIPELINE_DATA_DIR"):
+        configured = os.getenv(env_name, "").strip()
+        if configured:
+            allowed_roots.append((Path(configured).expanduser() / "assets" / "music").resolve())
+    root = _project_root()
+    allowed_roots.extend(
+        [
+            root / "backend" / "data" / "pipeline" / "assets" / "music",
+            root / "playground" / "data" / "pipeline" / "assets" / "music",
+            root / "final_pipeline" / "data" / "assets" / "music",
+        ]
+    )
+    for configured in str(os.getenv("STATIC_ASSET_EXTRA_ROOTS", "") or "").split(","):
+        raw_root = configured.strip()
+        if not raw_root:
+            continue
+        extra = Path(raw_root).expanduser()
+        allowed_roots.extend([extra, extra / "music", extra / "assets" / "music"])
+    try:
+        allowed_roots.extend(root.expanduser().resolve() for root in _asset_catalog()._asset_roots("music"))
+    except Exception:
+        pass
+    if not path.exists() or not path.is_file():
+        return ""
+    if path.suffix.lower() not in ALLOWED_MUSIC_EXTENSIONS:
+        return ""
+    for root in allowed_roots:
+        try:
+            path.relative_to(root.expanduser().resolve())
+            return str(path)
+        except ValueError:
+            continue
+    return ""
+
+
+def _save_playground_music_upload(file: UploadFile) -> tuple[Path, int]:
+    filename = file.filename or "playground-music"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_MUSIC_EXTENSIONS:
+        allowed = ", ".join(sorted(ext.lstrip(".") for ext in ALLOWED_MUSIC_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Upload an audio file: {allowed}.")
+
+    target_dir = _playground_music_upload_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")[:60] or "music"
+    target = target_dir / f"{stem}-{uuid4().hex[:8]}{suffix}"
+
+    total = 0
+    with target.open("wb") as handle:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MUSIC_UPLOAD_BYTES:
+                handle.close()
+                target.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail=f"Music upload is too large. Keep it under {MAX_MUSIC_UPLOAD_MB} MB.")
+            handle.write(chunk)
+
+    if total <= 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded music file is empty.")
+    return target.resolve(), total
+
+
+def _playground_music_upload_path(upload_id: str) -> Path | None:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", str(upload_id or "")):
+        return None
+    root = _playground_music_upload_dir().expanduser().resolve()
+    for path in root.glob(f"{upload_id}.*"):
+        resolved = path.resolve()
+        if resolved.is_file() and resolved.suffix.lower() in ALLOWED_MUSIC_EXTENSIONS:
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                continue
+            return resolved
+    return None
+
+
+def _source_prompt_from_parent(parent: dict[str, Any]) -> str:
+    candidates = (
+        parent.get("source_prompt"),
+        parent.get("effective_message"),
+        parent.get("user_message"),
+        parent.get("raw_user_message"),
+    )
+    for value in candidates:
+        text = _strip_duration_instruction(str(value or ""))
+        if text and not text.lower().startswith("fix:"):
+            return text
+    return ""
+
+
+def _route_notes(
+    payload: PlaygroundRunCreate,
+    parent: dict[str, Any],
+    is_followup: bool,
+    agent_instructions: dict[str, str],
+) -> str:
+    parts = [payload.notes.strip()] if payload.notes.strip() else []
+    if not is_followup:
+        return "\n\n".join(parts)
+
+    source_prompt = _source_prompt_from_parent(parent)
+    feedback = payload.message.strip()
+    context_lines = [
+        "FOLLOW-UP EDIT CONTEXT:",
+        f"- Original source prompt to preserve: {source_prompt}",
+        f"- Latest user feedback: {feedback}",
+        "- Keep the same topic, named subject, genre, and duration unless this feedback explicitly changes them.",
+        "- Treat the feedback as repair instructions, not as the new video topic.",
+    ]
+    if agent_instructions:
+        instruction_text = "; ".join(f"{agent}: {text}" for agent, text in agent_instructions.items() if str(text).strip())
+        if instruction_text:
+            context_lines.append(f"- Targeted agent repair: {instruction_text}")
+    previous_script = _previous_script_excerpt(parent)
+    if previous_script:
+        context_lines.extend(
+            [
+                "",
+                "PREVIOUS SCRIPT CONTEXT ONLY:",
+                "Use this to understand what the user is reacting to. Do not copy this failed wording.",
+                previous_script,
+            ]
+        )
+    parts.append("\n".join(context_lines))
+    return "\n\n".join(parts)
+
+
+def _previous_script_excerpt(run: dict[str, Any]) -> str:
+    for stage in run.get("stages", []) or []:
+        if not isinstance(stage, dict) or stage.get("id") != "script_agent":
+            continue
+        output = stage.get("output_json") if isinstance(stage.get("output_json"), dict) else {}
+        title = _clip(str(output.get("title") or ""), 140)
+        narration = _clip(str(output.get("narration") or ""), 1400)
+        if title or narration:
+            return "\n".join(part for part in (f"Title: {title}" if title else "", f"Narration excerpt: {narration}" if narration else "") if part)
+    return ""
+
+
+def _compact_chat_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    compact: list[dict[str, str]] = []
+    for item in (history or [])[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()[:30]
+        content = _clip(str(item.get("content") or ""), 500)
+        if role and content:
+            compact.append({"role": role, "content": content})
+    return compact
+
+
+def _clip(text: str, limit: int) -> str:
+    cleaned = " ".join(str(text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)].rstrip() + "..."
+
+
 def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     now = _now()
     run_id = str(uuid4())
     genre = _genre_for(payload.genre_id)
-    route_summary = f"{genre['display_name']} pipeline run for: {payload.message}"
+    route = _playground_route(payload)
+    effective_message = str(route["effective_message"])
+    effective_duration = int(route["effective_duration"])
+    parent_context = _route_parent_context(route, payload)
+    effective_settings = _current_settings_from_parent(parent_context, payload)
+    effective_settings.update(_clean_settings_patch(route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}))
+    effective_settings["duration"] = effective_duration
+    effective_settings["music_path"] = str(route.get("music_path") or "")
+    route_summary = str(route["route_summary"])
+    intent = str(route["intent"])
     stages = [_initial_stage(stage, now) for stage in VISIBLE_STAGES]
     stages[0] = _mark_stage_dict(
         stages[0],
+        "succeeded",
+        now,
+        input_json={
+            "chat_message": payload.message,
+            "genre_id": genre["genre_id"],
+            "notes": payload.notes,
+            "parent_run_id": payload.parent_run_id,
+            "start_new_thread": payload.start_new_thread,
+            "chat_history": _compact_chat_history(payload.chat_history),
+        },
+        output_json={
+            "intent": intent,
+            "target_agent": "final_pipeline",
+            "parent_run_id": route.get("parent_run_id", ""),
+            "source_prompt": route.get("source_prompt", ""),
+            "planned_agents": [stage["id"] for stage in VISIBLE_STAGES[3:]],
+        },
+        message="Playground routed this as a follow-up edit run" if route["is_followup"] else "Playground routed this as a new final-pipeline video run",
+    )
+    stages[1] = _mark_stage_dict(
+        stages[1],
+        "skipped",
+        now,
+        output_json={"reason": "Style sampling only runs during desktop calibration."},
+        message="Skipped for direct playground generation",
+    )
+    if route["is_followup"]:
+        stages[2] = _mark_stage_dict(
+            stages[2],
+            "succeeded",
+            now,
+            input_json={
+                "message": payload.message,
+                "parent_run_id": route.get("parent_run_id", ""),
+                "previous_topic": route.get("source_prompt", ""),
+                "chat_history": _compact_chat_history(payload.chat_history),
+            },
+            output_json={
+                "intent": intent,
+                "target_agent": route.get("target_agent", ""),
+                "settings_patch": route.get("settings_patch", {}),
+                "agent_instructions": route.get("agent_instructions", {}),
+                "repair_notes": route.get("repair_notes", []),
+            },
+            message="Mapped follow-up feedback into repair notes for the responsible agent",
+        )
+    else:
+        stages[2] = _mark_stage_dict(
+            stages[2],
+            "skipped",
+            now,
+            output_json={"reason": "Parameter mapping only runs for follow-up edit/remake prompts."},
+            message="Skipped because this is a new generation request",
+        )
+    stages[3] = _mark_stage_dict(
+        stages[3],
         "running",
         now,
         input_json=_safe_payload(payload),
         output_json={
             "route_summary": route_summary,
             "genre_id": genre["genre_id"],
-            "duration": payload.duration,
+            "duration": effective_duration,
+            "raw_message": payload.message,
+            "cleaned_message": effective_message,
+                "source_prompt": route.get("source_prompt", ""),
+                "parent_run_id": route.get("parent_run_id", ""),
+                "rerun_stage_id": route.get("rerun_stage_id", ""),
+                "settings_patch": route.get("settings_patch", {}),
+                "settings": effective_settings,
+            "music_path": route.get("music_path", ""),
+            "agent_instructions": route.get("agent_instructions", {}),
             "selected_provider": payload.llm_provider,
             "selected_model": payload.llm_model or "environment default",
         },
@@ -340,10 +1345,21 @@ def _build_initial_run(payload: PlaygroundRunCreate) -> dict[str, Any]:
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "id": run_id,
-        "user_message": payload.message,
+        "user_message": str(route["display_message"]),
+        "effective_message": effective_message,
+        "source_prompt": str(route.get("source_prompt") or effective_message),
+        "raw_user_message": payload.message,
+        "parent_run_id": str(route.get("parent_run_id") or ""),
+        "start_new_thread": bool(payload.start_new_thread),
+        "intent": intent,
         "genre_id": genre["genre_id"],
-        "duration": payload.duration,
-        "notes": payload.notes,
+        "duration": effective_duration,
+        "notes": str(route["notes"]),
+        "settings_patch": route.get("settings_patch", {}),
+        "settings": effective_settings,
+        "music_path": str(route.get("music_path") or ""),
+        "agent_instructions": route.get("agent_instructions", {}),
+        "chat_history": _compact_chat_history(payload.chat_history),
         "llm_provider": payload.llm_provider,
         "llm_model": payload.llm_model,
         "status": "running",
@@ -386,20 +1402,61 @@ def _execute_run(run_id: str, payload: PlaygroundRunCreate) -> None:
     transcript = _run_workspace(run_id) / "stdout.log"
     try:
         transcript.parent.mkdir(parents=True, exist_ok=True)
-        _update_run(run_id, lambda run: _mark_stage(run, "master_agent", "succeeded", "Shared pipeline process is starting"))
+        _update_run(run_id, lambda run: _mark_stage(run, "master_agent", "succeeded", "Shared final pipeline process is starting"))
         env = _pipeline_env(payload)
+        route = _playground_route(payload)
         cmd = [
             sys.executable,
             "main.py",
             "--topic",
-            payload.message,
+            str(route["effective_message"]),
             "--genre",
             payload.genre_id,
             "--duration",
-            str(_safe_duration(payload.duration)),
+            str(route["effective_duration"]),
         ]
-        if payload.notes:
-            cmd.extend(["--notes", payload.notes])
+        if route.get("source_prompt"):
+            cmd.extend(["--source-prompt", str(route["source_prompt"])])
+        if route.get("notes"):
+            cmd.extend(["--notes", str(route["notes"])])
+        settings_patch = route.get("settings_patch") if isinstance(route.get("settings_patch"), dict) else {}
+        settings_for_cmd = _current_settings_from_parent(_route_parent_context(route, payload), payload)
+        settings_for_cmd.update(_clean_settings_patch(settings_patch))
+        if settings_for_cmd.get("voice_speed") is not None:
+            cmd.extend(["--voice-speed", str(settings_for_cmd["voice_speed"])])
+        if settings_for_cmd.get("caption_words") is not None:
+            cmd.extend(["--caption-words", str(settings_for_cmd["caption_words"])])
+        if settings_for_cmd.get("image_count") is not None:
+            cmd.extend(["--image-count", str(settings_for_cmd["image_count"])])
+        music_path = _valid_music_path(str(route.get("music_path") or settings_for_cmd.get("music_path") or payload.music_path or ""))
+        if music_path:
+            cmd.extend(["--music-path", music_path])
+        if settings_for_cmd.get("music_volume") is not None:
+            cmd.extend(["--music-volume", str(settings_for_cmd["music_volume"])])
+        if settings_for_cmd.get("min_visual_segment_ms") is not None:
+            cmd.extend(["--min-visual-segment-ms", str(settings_for_cmd["min_visual_segment_ms"])])
+        if settings_for_cmd.get("visual_motion") is not None:
+            cmd.extend(["--visual-motion", "on" if settings_for_cmd["visual_motion"] else "off"])
+        if settings_for_cmd.get("transition_style") is not None:
+            cmd.extend(["--transition-style", str(settings_for_cmd["transition_style"])])
+        if settings_for_cmd.get("transition_seconds") is not None:
+            cmd.extend(["--transition-seconds", str(settings_for_cmd["transition_seconds"])])
+        if settings_for_cmd.get("zoom_variant") is not None:
+            cmd.extend(["--zoom-variant", str(settings_for_cmd["zoom_variant"])])
+        agent_instructions = route.get("agent_instructions") if isinstance(route.get("agent_instructions"), dict) else {}
+        if agent_instructions:
+            cmd.extend(["--agent-instructions-json", json.dumps(agent_instructions, ensure_ascii=True)])
+        if route.get("rerun_stage_id"):
+            parent = _route_parent_context(route, payload)
+            parent_run_dir = _resolve_existing_path(Path(str(parent.get("pipeline_run_dir") or "")))
+            if not parent_run_dir.exists():
+                raise RuntimeError("Cannot rerun this node because the parent pipeline artifacts are missing.")
+            cmd.extend([
+                "--resume-from-run-dir",
+                str(parent_run_dir),
+                "--rerun-stage",
+                str(route["rerun_stage_id"]),
+            ])
 
         pipeline_root = _pipeline_root()
         if not (pipeline_root / "main.py").exists():
@@ -459,35 +1516,27 @@ def _pipeline_env(payload: PlaygroundRunCreate) -> dict[str, str]:
 
     provider = (payload.llm_provider or "env").strip().lower()
     if provider and provider != "env":
+        if provider not in {"gemini", "google"}:
+            raise ValueError("Only Gemini is supported for playground generation.")
         env["LLM_PROVIDER"] = provider
-    elif not _has_any_llm_key(env):
-        env["LLM_PROVIDER"] = "offline"
+    else:
+        env["LLM_PROVIDER"] = "gemini"
 
     if payload.llm_model:
         if provider == "gemini":
             env["GEMINI_MODEL"] = payload.llm_model
-        elif provider == "groq":
-            env["GROQ_MODEL"] = payload.llm_model
-        elif provider == "anthropic":
-            env["ANTHROPIC_MODEL"] = payload.llm_model
         else:
-            env["LLM_MODEL"] = payload.llm_model
+            env["GEMINI_MODEL"] = payload.llm_model
 
     api_key = payload.llm_api_key.strip()
     if api_key:
-        if provider == "gemini":
-            env["GEMINI_API_KEY"] = api_key
-        elif provider == "groq":
-            env["GROQ_API_KEY"] = api_key
-        elif provider == "anthropic":
-            env["ANTHROPIC_API_KEY"] = api_key
-        else:
-            env["LLM_API_KEY"] = api_key
+        env["LLM_PROVIDER"] = "gemini"
+        env["GEMINI_API_KEY"] = api_key
     return env
 
 
 def _has_any_llm_key(env: dict[str, str]) -> bool:
-    return any(env.get(name, "").strip() for name in ("LLM_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"))
+    return any(env.get(name, "").strip() for name in ("LLM_API_KEY", "GEMINI_API_KEY"))
 
 
 def _handle_pipeline_line(run_id: str, line: str) -> None:
@@ -558,11 +1607,22 @@ def _complete_successful_run(run: dict[str, Any]) -> None:
 def _fail_run_from_pipeline_error(run: dict[str, Any], fallback_message: str) -> None:
     _refresh_run_from_pipeline_files(run)
     error = _pipeline_error(run)
-    visible_stage = PIPELINE_STAGE_TO_VISIBLE.get(str(error.get("stage") or ""), "")
+    visible_stage = _visible_stage_for_pipeline_stage(str(error.get("stage") or ""))
     message = str(error.get("message") or fallback_message)
     if not visible_stage:
         visible_stage = _current_or_first_unfinished_stage(run)
     _fail_run(run, visible_stage, message, error)
+
+
+def _visible_stage_for_pipeline_stage(stage: str) -> str:
+    if stage in PIPELINE_STAGE_TO_VISIBLE:
+        return PIPELINE_STAGE_TO_VISIBLE[stage]
+    normalized = re.sub(r"_repair_\d+$", "", stage)
+    if normalized in PIPELINE_STAGE_TO_VISIBLE:
+        return PIPELINE_STAGE_TO_VISIBLE[normalized]
+    if normalized.startswith("validate_"):
+        return "validation_agent"
+    return ""
 
 
 def _fail_run(run: dict[str, Any], stage_id: str, message: str, details: dict[str, Any] | None = None) -> None:
@@ -597,7 +1657,7 @@ def _refresh_run_from_pipeline_files(run: dict[str, Any]) -> None:
     run_dir_text = str(run.get("pipeline_run_dir") or "")
     if not run_dir_text:
         return
-    run_dir = Path(run_dir_text)
+    run_dir = _resolve_existing_path(Path(run_dir_text))
     if not run_dir.exists():
         return
     for stage in run.get("stages", []):
@@ -618,7 +1678,7 @@ def _refresh_run_from_pipeline_files(run: dict[str, Any]) -> None:
         if output_json is not None:
             stage["output_json"] = _merge_validation_summary(stage_id, output_json, run_dir)
             if stage["status"] != "failed":
-                stage["status"] = "succeeded"
+                stage["status"] = "skipped" if stage["output_json"].get("status") == "skipped" else "succeeded"
                 stage["completed_at"] = stage["completed_at"] or _mtime(log_dir / "output.json")
         if events:
             stage["events"] = events
@@ -638,7 +1698,8 @@ def _merge_validation_summary(stage_id: str, output_json: dict[str, Any], run_di
     if not validation_stage:
         return output_json
     error = _read_json(run_dir / "errors" / "error.json")
-    if isinstance(error, dict) and str(error.get("stage")) in {validation_stage, f"{validation_stage}_result"}:
+    error_stage = re.sub(r"_repair_\d+$", "", str(error.get("stage") or "")) if isinstance(error, dict) else ""
+    if isinstance(error, dict) and error_stage in {validation_stage, f"{validation_stage}_result"}:
         output_json = dict(output_json)
         output_json["validation"] = {"passed": False, "error": error.get("message", "")}
         return output_json
@@ -654,13 +1715,26 @@ def _collect_stage_artifacts(stage_id: str, run_dir: Path, log_dir: Path, output
         log_dir / "events.log",
     ]
     if stage_id == "asset_agent":
+        paths.append(log_dir / "asset_selection_trace.json")
+        if output_json.get("asset_trace_path"):
+            paths.append(Path(str(output_json.get("asset_trace_path"))))
+        if output_json.get("timed_visual_cues_path"):
+            paths.append(Path(str(output_json.get("timed_visual_cues_path"))))
         paths.extend(Path(path) for path in output_json.get("image_paths", []) if path)
+        paths.extend(Path(path) for path in output_json.get("sfx_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("video_paths", []) if path)
         paths.extend(Path(path) for path in output_json.get("media_paths", []) if path)
     elif stage_id == "audio_agent":
         paths.extend(Path(path) for path in (output_json.get("narration_path"), output_json.get("final_audio_path")) if path)
+    elif stage_id == "music_agent":
+        paths.extend(Path(path) for path in (output_json.get("input_audio_path"), output_json.get("final_audio_path"), output_json.get("music_path")) if path)
+        paths.extend(Path(path) for path in output_json.get("sfx_paths", []) if path)
     elif stage_id == "caption_agent":
         paths.extend(Path(path) for path in (output_json.get("srt_path"), output_json.get("ass_path")) if path)
+    elif stage_id == "timed_visual_agent":
+        paths.append(log_dir / "timed_visual_cues.json")
+        if isinstance(output_json, dict) and output_json.get("timed_visual_cues_path"):
+            paths.append(Path(str(output_json.get("timed_visual_cues_path"))))
     elif stage_id == "render_agent":
         paths.extend(Path(path) for path in (output_json.get("video_path"), str(run_dir / "output" / "final_audio_check.wav")) if path)
     elif stage_id == "thumbnail_agent":
@@ -680,11 +1754,24 @@ def _collect_final_artifacts(run: dict[str, Any]) -> list[dict[str, Any]]:
             [
                 run_dir / "output" / "final.mp4",
                 run_dir / "output" / "final_audio_check.wav",
+                run_dir / "intermediate" / "audio" / "final_audio_with_music.wav",
                 run_dir / "output" / "thumbnails" / "shorts_cover.jpg",
                 run_dir / "output" / "thumbnails" / "youtube_thumbnail.jpg",
+                run_dir / "logs" / "timed_visual_agent" / "timed_visual_cues.json",
+                run_dir / "logs" / "asset_agent" / "asset_selection_trace.json",
                 run_dir / "errors" / "error.json",
             ]
         )
+    for stage_id, keys in {
+        "render_agent": ("video_path",),
+        "thumbnail_agent": ("shorts_cover_path", "youtube_thumbnail_path"),
+        "asset_agent": ("asset_trace_path", "timed_visual_cues_path"),
+        "music_agent": ("final_audio_path", "music_path"),
+    }.items():
+        output = _stage_output_json(run, stage_id)
+        paths.extend(Path(str(output.get(key))) for key in keys if output.get(key))
+        if stage_id == "music_agent":
+            paths.extend(Path(str(path)) for path in output.get("sfx_paths", []) if path)
     return _artifact_list(paths)
 
 
@@ -692,13 +1779,27 @@ def _final_output_json(run: dict[str, Any]) -> dict[str, Any]:
     run_dir_text = str(run.get("pipeline_run_dir") or "")
     run_dir = Path(run_dir_text) if run_dir_text else None
     final_video = run_dir / "output" / "final.mp4" if run_dir else None
+    video_path = ""
+    if final_video and _resolve_existing_path(final_video).exists():
+        video_path = str(final_video)
+    else:
+        video_path = str(_stage_output_json(run, "render_agent").get("video_path") or "")
     return {
         "status": run.get("status", "running"),
         "pipeline_run_dir": run_dir_text,
-        "video_path": str(final_video) if final_video and final_video.exists() else "",
+        "video_path": video_path,
         "stdout_path": run.get("stdout_path", ""),
         "returncode": run.get("returncode"),
     }
+
+
+def _stage_output_json(run: dict[str, Any], stage_id: str) -> dict[str, Any]:
+    try:
+        stage = _stage_by_id(run, stage_id)
+    except KeyError:
+        return {}
+    output = stage.get("output_json")
+    return output if isinstance(output, dict) else {}
 
 
 def _artifact_list(paths: list[Path]) -> list[dict[str, Any]]:
@@ -706,7 +1807,7 @@ def _artifact_list(paths: list[Path]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for path in paths:
         try:
-            resolved = path.expanduser().resolve()
+            resolved = _resolve_existing_path(path)
         except OSError:
             continue
         if str(resolved) in seen or not resolved.exists() or not resolved.is_file():
@@ -761,15 +1862,92 @@ def _read_run(path: Path) -> dict[str, Any]:
             final["artifacts"] = _collect_final_artifacts(run)
         if changed:
             _save_run(run)
-        return run
+        return _with_thread_runs(run)
 
 
 def _read_run_raw(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _with_thread_runs(run: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(run)
+    thread_runs = [_thread_run_payload(parent) for parent in _thread_ancestors(run)]
+    thread_runs.append(_thread_run_payload(run))
+    payload["thread_runs"] = thread_runs
+    return payload
+
+
+def _thread_ancestors(run: dict[str, Any]) -> list[dict[str, Any]]:
+    ancestors: list[dict[str, Any]] = []
+    seen: set[str] = {str(run.get("id") or "")}
+    parent_id = str(run.get("parent_run_id") or "").strip()
+    while parent_id and parent_id not in seen:
+        seen.add(parent_id)
+        parent = _load_thread_run(parent_id)
+        if not parent:
+            break
+        ancestors.insert(0, parent)
+        parent_id = str(parent.get("parent_run_id") or "").strip()
+    return ancestors
+
+
+def _load_thread_run(run_id: str) -> dict[str, Any]:
+    path = _existing_run_path(run_id)
+    if path.exists():
+        try:
+            run = _read_run_raw(path)
+            _sanitize_run(run)
+            _refresh_run_from_pipeline_files(run)
+            _ensure_prompt_texts(run)
+            if run.get("status") in TERMINAL_STATUSES:
+                final = _stage_by_id(run, "final_output")
+                final["output_json"].update(_final_output_json(run))
+                final["artifacts"] = _collect_final_artifacts(run)
+            return run
+        except Exception:
+            return {}
+    run = _read_run_from_db(run_id) or {}
+    if run:
+        _sanitize_run(run)
+        _refresh_run_from_pipeline_files(run)
+    return run
+
+
+def _thread_run_payload(run: dict[str, Any]) -> dict[str, Any]:
+    keys = {
+        "id",
+        "user_message",
+        "effective_message",
+        "source_prompt",
+        "raw_user_message",
+        "parent_run_id",
+        "chat_history",
+        "intent",
+        "genre_id",
+        "duration",
+        "notes",
+        "settings",
+        "settings_patch",
+        "music_path",
+        "agent_instructions",
+        "llm_provider",
+        "llm_model",
+        "status",
+        "route_summary",
+        "created_at",
+        "updated_at",
+        "pipeline_run_dir",
+        "stdout_path",
+        "returncode",
+        "stages",
+    }
+    return {key: run.get(key) for key in keys if key in run}
+
+
 def _save_run(run: dict[str, Any]) -> None:
-    path = _run_path(str(run["id"]))
+    path = _existing_run_path(str(run["id"]))
+    if not path.exists():
+        path = _run_path(str(run["id"]))
     path.parent.mkdir(parents=True, exist_ok=True)
     _sanitize_run(run)
     tmp = path.with_suffix(".json.tmp")
@@ -781,11 +1959,77 @@ def _save_run(run: dict[str, Any]) -> None:
             path.write_text(json.dumps(run, indent=2, ensure_ascii=True), encoding="utf-8")
         except OSError:
             pass
+    _save_run_to_db(run)
+
+
+def _list_runs_from_db() -> list[dict[str, Any]]:
+    try:
+        models = _models_module()
+        with _playground_session() as db:
+            rows = db.scalars(
+                select(models.AgentRunSnapshot)
+                .where(models.AgentRunSnapshot.surface == "playground")
+                .order_by(models.AgentRunSnapshot.updated_at.desc())
+                .limit(50)
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "user_message": row.user_message,
+                    "status": row.status,
+                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+                }
+                for row in rows
+            ]
+    except Exception:
+        return []
+
+
+def _read_run_from_db(run_id: str) -> dict[str, Any] | None:
+    try:
+        models = _models_module()
+        with _playground_session() as db:
+            row = db.get(models.AgentRunSnapshot, run_id)
+            if row is None or row.surface != "playground":
+                return None
+            payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+            if not payload:
+                return None
+            payload = dict(payload)
+            payload.setdefault("id", row.id)
+            payload.setdefault("status", row.status)
+            payload.setdefault("user_message", row.user_message)
+            payload.setdefault("genre_id", row.genre_id)
+            payload.setdefault("pipeline_run_dir", row.pipeline_run_dir)
+            return payload
+    except Exception:
+        return None
+
+
+def _save_run_to_db(run: dict[str, Any]) -> None:
+    try:
+        models = _models_module()
+        with _playground_session() as db:
+            row = db.get(models.AgentRunSnapshot, str(run["id"]))
+            if row is None:
+                row = models.AgentRunSnapshot(id=str(run["id"]), surface="playground")
+                db.add(row)
+            row.user_message = str(run.get("user_message") or run.get("raw_user_message") or "")
+            row.genre_id = str(run.get("genre_id") or "")
+            row.status = str(run.get("status") or "running")
+            row.pipeline_run_dir = str(run.get("pipeline_run_dir") or "")
+            payload = dict(run)
+            payload.pop("thread_runs", None)
+            row.payload_json = payload
+            db.commit()
+    except Exception:
+        pass
 
 
 def _update_run(run_id: str, updater) -> None:
     with _RUN_LOCK:
-        path = _run_path(run_id)
+        path = _existing_run_path(run_id)
         run = _read_run_raw(path)
         _sanitize_run(run)
         updater(run)
@@ -856,7 +2100,7 @@ def _normalize_legacy_run(run: dict[str, Any], path: Path) -> dict[str, Any]:
     else:
         _fail_run(
             normalized,
-            "master_agent",
+            "desktop_master_agent",
             "This was an old mock playground run. Start a new run to execute the real shared pipeline.",
         )
     return normalized
@@ -877,7 +2121,30 @@ def _broken_run_summary(path: Path, exc: Exception) -> dict[str, Any]:
 def _safe_payload(payload: PlaygroundRunCreate) -> dict[str, Any]:
     data = payload.model_dump()
     data["llm_api_key"] = "provided" if payload.llm_api_key.strip() else ""
+    data["chat_history"] = _compact_chat_history(payload.chat_history)
+    route = _playground_route(payload)
+    data["effective_message"] = route["effective_message"]
+    data["effective_duration"] = route["effective_duration"]
+    data["intent"] = route["intent"]
+    data["source_prompt"] = route["source_prompt"]
+    data["rerun_stage_id"] = route["rerun_stage_id"]
+    data["settings_patch"] = route["settings_patch"]
+    data["settings"] = {
+        **_current_settings_from_parent(_route_parent_context(route, payload), payload),
+        **_clean_settings_patch(route["settings_patch"] if isinstance(route["settings_patch"], dict) else {}),
+    }
+    data["settings"]["music_path"] = str(route.get("music_path") or "")
+    data["music_path"] = str(route.get("music_path") or "")
+    data["agent_instructions"] = route["agent_instructions"]
     return data
+
+
+def _effective_duration(payload: PlaygroundRunCreate) -> int:
+    return int(_playground_route(payload)["effective_duration"])
+
+
+def _effective_message(payload: PlaygroundRunCreate) -> str:
+    return str(_playground_route(payload)["effective_message"])
 
 
 def _safe_duration(duration: int) -> int:
@@ -886,7 +2153,82 @@ def _safe_duration(duration: int) -> int:
     return 30
 
 
+def _duration_from_text(text: str) -> int | None:
+    patterns = (
+        r"\bduration\s*(?:of|for|is|:|=|,|-)?\s*(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b",
+        r"\b(30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, str(text or ""), flags=re.I)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _settings_from_text(text: str) -> dict[str, Any]:
+    source = str(text or "")
+    settings: dict[str, Any] = {}
+    duration = _duration_from_text(source)
+    if duration is not None:
+        settings["duration"] = duration
+
+    caption_patterns = (
+        r"\b([1-8])\s*(?:words?)\s*(?:per|for|in)?\s*(?:caption|captions|subtitle|subtitles)\b",
+        r"\b(?:caption|captions|subtitle|subtitles)\s*(?:words?|word count)?\s*(?:to|is|=|:|-)?\s*([1-8])\b",
+    )
+    for pattern in caption_patterns:
+        match = re.search(pattern, source, flags=re.I)
+        if match:
+            settings["caption_words"] = int(match.group(1))
+            break
+
+    image_patterns = (
+        r"\b([1-9]|1[0-9]|2[0-4])\s*(?:images?|visuals?|pictures?|assets?)\b",
+        r"\b(?:images?|visuals?|pictures?|assets?)\s*(?:count|to|is|=|:|-)?\s*([1-9]|1[0-9]|2[0-4])\b",
+    )
+    for pattern in image_patterns:
+        match = re.search(pattern, source, flags=re.I)
+        if match:
+            settings["image_count"] = int(match.group(1))
+            break
+
+    return _clean_settings_patch(settings)
+
+
+def _strip_duration_instruction(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(r"\b(?:keep|set|use|with)?\s*(?:the\s+)?duration\s*(?:of|for|to|is|:|=|,|-)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)?\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:keep|set|use)\s+(?:it\s+)?(?:for|to)?\s*(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:30|45|60)\s*(?:seconds?|secs?|secons?|secnds?|s)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    cleaned = re.sub(r"(?:,\s*)?\b(?:keep|set|use|for|to|with)\b\s*$", " ", cleaned, flags=re.I)
+    return " ".join(cleaned.split()).strip(" ,.;")
+
+
 def _genre_for(genre_id: str) -> dict[str, Any]:
+    try:
+        models = _models_module()
+        with _static_session() as db:
+            row = db.get(models.Genre, genre_id)
+            if row is None:
+                row = db.scalar(
+                    select(models.Genre).where(models.Genre.is_active.is_(True)).order_by(models.Genre.display_name.asc())
+                )
+            if row is not None:
+                return {
+                    "genre_id": row.id,
+                    "display_name": row.display_name,
+                    "tone": row.tone,
+                    "word_count_min": row.word_count_min,
+                    "word_count_max": row.word_count_max,
+                    "hook_patterns": row.hook_patterns or [],
+                    "banned_phrases": row.banned_phrases or [],
+                    "visual_style": row.visual_style or {},
+                    "topic_rules": row.topic_rules or [],
+                    "script_profile": (row.metadata_json or {}).get("script_profile", {}),
+                }
+    except Exception:
+        pass
     path = _pipeline_data_dir() / "genres" / f"{genre_id}.yaml"
     if not path.exists():
         genres = list_genres()
@@ -1062,11 +2404,36 @@ def _decode_artifact_id(artifact_id: str) -> Path | None:
         raw = base64.urlsafe_b64decode(artifact_id.encode("ascii")).decode("utf-8")
     except Exception:
         return None
-    path = Path(raw).expanduser().resolve()
-    allowed = [_runs_dir(), _pipeline_data_dir(), _pipeline_output_runs_dir()]
+    path = _resolve_existing_path(Path(raw))
+    allowed = [
+        *_all_runs_dirs(),
+        _pipeline_data_dir(),
+        _pipeline_output_runs_dir(),
+        _legacy_pipeline_output_runs_dir(),
+    ]
     if any(_is_relative_to(path, root.resolve()) for root in allowed):
         return path
     return None
+
+
+def _resolve_existing_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved.exists():
+        return resolved
+    raw = str(path)
+    remaps = (
+        ("/app/playground/data/runs", _legacy_runs_dir()),
+        ("/app/data/playground/runs", _runs_dir()),
+        ("/app/playground/data/pipeline", _pipeline_data_dir()),
+        ("/app/data/pipeline", _project_root() / "backend" / "data" / "pipeline"),
+    )
+    for prefix, root in remaps:
+        if raw == prefix or raw.startswith(prefix + "/"):
+            suffix = raw[len(prefix) :].lstrip("/")
+            candidate = (root / suffix).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+    return resolved
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

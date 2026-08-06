@@ -3,10 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.database import Base
+from app.core.database import PlaygroundBase, StaticBase, UserBase
 
 
 def utc_now() -> datetime:
@@ -17,7 +17,7 @@ def uuid_str() -> str:
     return str(uuid.uuid4())
 
 
-class User(Base):
+class User(UserBase):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -35,9 +35,15 @@ class User(Base):
     )
     calibrations: Mapped[list[GenreCalibration]] = relationship(back_populates="user", cascade="all, delete-orphan")
     feedback: Mapped[list[GenerationFeedback]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    payment_checkouts: Mapped[list[PaymentCheckout]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    entitlement: Mapped[UserEntitlement | None] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
-class UserApiKey(Base):
+class UserApiKey(UserBase):
     __tablename__ = "user_api_keys"
     __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_api_key_provider"),)
 
@@ -54,7 +60,7 @@ class UserApiKey(Base):
     user: Mapped[User] = relationship(back_populates="api_keys")
 
 
-class OnboardingState(Base):
+class OnboardingState(UserBase):
     __tablename__ = "onboarding_states"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
@@ -76,7 +82,7 @@ class OnboardingState(Base):
         return self.completed_at is not None
 
 
-class GenreCalibration(Base):
+class GenreCalibration(UserBase):
     __tablename__ = "genre_calibrations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -94,7 +100,7 @@ class GenreCalibration(Base):
     user: Mapped[User] = relationship(back_populates="calibrations")
 
 
-class GenerationFeedback(Base):
+class GenerationFeedback(UserBase):
     __tablename__ = "generation_feedback"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -107,7 +113,63 @@ class GenerationFeedback(Base):
     user: Mapped[User] = relationship(back_populates="feedback")
 
 
-class Chat(Base):
+class PaymentCheckout(UserBase):
+    __tablename__ = "payment_checkouts"
+    __table_args__ = (
+        Index("ix_payment_checkouts_user_status", "user_id", "status"),
+        Index("ix_payment_checkouts_order", "razorpay_order_id"),
+        Index("ix_payment_checkouts_subscription", "razorpay_subscription_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    plan_code: Mapped[str] = mapped_column(String(40), index=True)
+    kind: Mapped[str] = mapped_column(String(30), default="subscription")
+    amount_paise: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    status: Mapped[str] = mapped_column(String(40), default="created", index=True)
+    razorpay_order_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    razorpay_subscription_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    razorpay_payment_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    razorpay_signature: Mapped[str] = mapped_column(Text, default="")
+    checkout_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="payment_checkouts")
+
+
+class UserEntitlement(UserBase):
+    __tablename__ = "user_entitlements"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="inactive", index=True)
+    plan_code: Mapped[str] = mapped_column(String(40), default="")
+    razorpay_subscription_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    razorpay_payment_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    user: Mapped[User] = relationship(back_populates="entitlement")
+
+
+class RazorpayWebhookEvent(UserBase):
+    __tablename__ = "razorpay_webhook_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(120), default="", index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Chat(UserBase):
     __tablename__ = "chats"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
@@ -122,7 +184,7 @@ class Chat(Base):
     jobs: Mapped[list[VideoJob]] = relationship(back_populates="chat", cascade="all, delete-orphan")
 
 
-class Message(Base):
+class Message(UserBase):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -135,7 +197,7 @@ class Message(Base):
     chat: Mapped[Chat] = relationship(back_populates="messages")
 
 
-class VideoJob(Base):
+class VideoJob(UserBase):
     __tablename__ = "video_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
@@ -164,7 +226,7 @@ class VideoJob(Base):
     chat: Mapped[Chat] = relationship(back_populates="jobs")
 
 
-class Genre(Base):
+class Genre(StaticBase):
     __tablename__ = "genres"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -183,210 +245,86 @@ class Genre(Base):
     voice_rate: Mapped[float] = mapped_column(Float, default=1.0)
     music_mood: Mapped[str] = mapped_column(String(80), default="")
     realism_mode: Mapped[str] = mapped_column(String(60), default="inspired_by_real_events")
+    hook_patterns: Mapped[list] = mapped_column(JSON, default=list)
+    banned_phrases: Mapped[list] = mapped_column(JSON, default=list)
+    visual_style: Mapped[dict] = mapped_column(JSON, default=dict)
+    topic_rules: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    rules: Mapped[list[GenreRule]] = relationship(back_populates="genre", cascade="all, delete-orphan")
-    hooks: Mapped[list[GenreHook]] = relationship(back_populates="genre", cascade="all, delete-orphan")
-    reference_videos: Mapped[list[ReferenceVideo]] = relationship(back_populates="genre", cascade="all, delete-orphan")
-    visual_style: Mapped[VisualStyleRule | None] = relationship(
-        back_populates="genre",
-        cascade="all, delete-orphan",
-        uselist=False,
+class ReferenceExample(StaticBase):
+    __tablename__ = "reference_examples"
+    __table_args__ = (
+        Index("ix_reference_examples_genre_score", "genre_id", "overall_score"),
+        Index("ix_reference_examples_genre_enabled", "genre_id", "usable_as_few_shot"),
     )
 
-
-class GenreRule(Base):
-    __tablename__ = "genre_rules"
-    __table_args__ = (UniqueConstraint("genre_id", "rule_type", "value", name="uq_genre_rule"),)
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    rule_type: Mapped[str] = mapped_column(String(60), index=True)
-    value: Mapped[str] = mapped_column(String(300))
-    weight: Mapped[int] = mapped_column(Integer, default=0)
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    genre: Mapped[Genre] = relationship(back_populates="rules")
-
-
-class GenreHook(Base):
-    __tablename__ = "genre_hooks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    hook_type: Mapped[str] = mapped_column(String(80), default="")
-    template: Mapped[str] = mapped_column(String(500))
-    emotional_trigger: Mapped[str] = mapped_column(String(80), default="")
-    avg_score: Mapped[float] = mapped_column(Float, default=0.0)
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    genre: Mapped[Genre] = relationship(back_populates="hooks")
-
-
-class ReferenceVideo(Base):
-    __tablename__ = "reference_videos"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    video_url: Mapped[str] = mapped_column(String(500), unique=True, index=True)
-    channel_name: Mapped[str] = mapped_column(String(120), default="")
-    channel_subscribers: Mapped[int] = mapped_column(Integer, default=0)
-    views: Mapped[int] = mapped_column(Integer, default=0)
-    likes: Mapped[int] = mapped_column(Integer, default=0)
-    comments: Mapped[int] = mapped_column(Integer, default=0)
-    upload_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    genre_id: Mapped[str] = mapped_column(String(80), index=True)
+    source_url: Mapped[str] = mapped_column(String(700), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    source_label: Mapped[str] = mapped_column(String(120), default="")
+    script: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    analysis: Mapped[dict] = mapped_column(JSON, default=dict)
+    facts: Mapped[list] = mapped_column(JSON, default=list)
     duration_sec: Mapped[int] = mapped_column(Integer, default=0)
-    title: Mapped[str] = mapped_column(String(160), default="")
-    description_first_line: Mapped[str] = mapped_column(String(300), default="")
-    hashtags: Mapped[str] = mapped_column(String(500), default="")
-    full_script: Mapped[str] = mapped_column(Text, default="")
     word_count: Mapped[int] = mapped_column(Integer, default=0)
-    sentence_count: Mapped[int] = mapped_column(Integer, default=0)
-    words_per_second: Mapped[float] = mapped_column(Float, default=0.0)
     overall_score: Mapped[float] = mapped_column(Float, default=0.0)
-    usable_as_few_shot: Mapped[bool] = mapped_column(Boolean, default=False)
+    usable_as_few_shot: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    genre: Mapped[Genre] = relationship(back_populates="reference_videos")
-    script_analysis: Mapped[ScriptAnalysis | None] = relationship(
-        back_populates="reference_video",
-        cascade="all, delete-orphan",
-        uselist=False,
+
+class StaticAsset(StaticBase):
+    __tablename__ = "static_assets"
+    __table_args__ = (
+        Index("ix_static_assets_type_enabled", "asset_type", "enabled"),
+        Index("ix_static_assets_type_source", "asset_type", "source"),
+        Index("ix_static_assets_mood_enabled", "mood", "enabled"),
+        Index("ix_static_assets_intensity_enabled", "intensity", "enabled"),
     )
 
-
-class ScriptAnalysis(Base):
-    __tablename__ = "script_analysis"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    reference_video_id: Mapped[int] = mapped_column(ForeignKey("reference_videos.id"), unique=True, index=True)
-    hook_first_sentence: Mapped[str] = mapped_column(String(500), default="")
-    hook_type: Mapped[str] = mapped_column(String(80), default="")
-    hook_emotional_trigger: Mapped[str] = mapped_column(String(80), default="")
-    hook_speed_sec: Mapped[float] = mapped_column(Float, default=0.0)
-    opening_words: Mapped[str] = mapped_column(String(200), default="")
-    body_sentence_count: Mapped[int] = mapped_column(Integer, default=0)
-    has_twist_reveal: Mapped[bool] = mapped_column(Boolean, default=False)
-    twist_line: Mapped[str] = mapped_column(String(700), default="")
-    ending_type: Mapped[str] = mapped_column(String(80), default="")
-    last_sentence: Mapped[str] = mapped_column(String(500), default="")
-    tense_used: Mapped[str] = mapped_column(String(60), default="")
-    pov_person: Mapped[str] = mapped_column(String(60), default="")
-    narrative_technique: Mapped[str] = mapped_column(String(120), default="")
-    emotional_arc: Mapped[str] = mapped_column(String(300), default="")
-    power_words: Mapped[str] = mapped_column(String(700), default="")
-    emphasis_words: Mapped[str] = mapped_column(String(700), default="")
-    sensory_language_used: Mapped[str] = mapped_column(Text, default="")
-    retention_hook: Mapped[str] = mapped_column(String(500), default="")
-    likely_share_trigger: Mapped[str] = mapped_column(String(500), default="")
-    why_it_worked: Mapped[str] = mapped_column(Text, default="")
-    what_to_improve: Mapped[str] = mapped_column(Text, default="")
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    asset_type: Mapped[str] = mapped_column(String(30), default="music", index=True)
+    name: Mapped[str] = mapped_column(String(180), default="")
+    path: Mapped[str] = mapped_column(Text, unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    use_cases: Mapped[list] = mapped_column(JSON, default=list)
+    mood: Mapped[str] = mapped_column(String(80), default="", index=True)
+    intensity: Mapped[str] = mapped_column(String(40), default="", index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(80), default="local", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    reference_video: Mapped[ReferenceVideo] = relationship(back_populates="script_analysis")
 
+class AgentRunSnapshot(PlaygroundBase):
+    __tablename__ = "agent_run_snapshots"
+    __table_args__ = (
+        Index("ix_agent_run_snapshots_surface_updated", "surface", "updated_at"),
+        Index("ix_agent_run_snapshots_status_updated", "status", "updated_at"),
+    )
 
-class VisualStyleRule(Base):
-    __tablename__ = "visual_style_rules"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), unique=True, index=True)
-    layout_type: Mapped[str] = mapped_column(String(80), default="")
-    image_or_video_count: Mapped[int] = mapped_column(Integer, default=0)
-    image_change_timing: Mapped[str] = mapped_column(String(120), default="")
-    transition_type: Mapped[str] = mapped_column(String(80), default="")
-    image_style: Mapped[str] = mapped_column(String(160), default="")
-    visual_keywords: Mapped[str] = mapped_column(Text, default="")
-    negative_visual_keywords: Mapped[str] = mapped_column(Text, default="")
-    caption_style: Mapped[str] = mapped_column(String(120), default="")
-    caption_font: Mapped[str] = mapped_column(String(120), default="")
-    caption_primary_color: Mapped[str] = mapped_column(String(80), default="")
-    caption_highlight_color: Mapped[str] = mapped_column(String(80), default="")
-    caption_position: Mapped[str] = mapped_column(String(80), default="")
-    music_mood: Mapped[str] = mapped_column(String(80), default="")
-    sfx_rules: Mapped[str] = mapped_column(Text, default="")
-    source_policy: Mapped[str] = mapped_column(String(80), default="stock_video_first")
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    surface: Mapped[str] = mapped_column(String(40), default="playground", index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    chat_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    job_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    user_message: Mapped[str] = mapped_column(Text, default="")
+    genre_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    pipeline_run_dir: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-    genre: Mapped[Genre] = relationship(back_populates="visual_style")
-
-
-class TopicExpansionRule(Base):
-    __tablename__ = "topic_expansion_rules"
-    __table_args__ = (UniqueConstraint("genre_id", "trigger_term", name="uq_topic_expansion_rule"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    trigger_term: Mapped[str] = mapped_column(String(120), index=True)
-    search_queries: Mapped[str] = mapped_column(Text)
-    required_words: Mapped[str] = mapped_column(String(700), default="")
-    forbidden_words: Mapped[str] = mapped_column(String(700), default="")
-    realism_mode: Mapped[str] = mapped_column(String(60), default="inspired_by_real_events")
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-
-class TopicResearchSource(Base):
-    __tablename__ = "topic_research_sources"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    topic: Mapped[str] = mapped_column(String(300), index=True)
-    genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    title: Mapped[str] = mapped_column(String(300), default="")
-    url: Mapped[str] = mapped_column(String(700), default="")
-    source_type: Mapped[str] = mapped_column(String(80), default="")
-    snippet: Mapped[str] = mapped_column(Text, default="")
-    extracted_facts: Mapped[str] = mapped_column(Text, default="")
-    credibility_score: Mapped[float] = mapped_column(Float, default=0.0)
-    relevance_score: Mapped[float] = mapped_column(Float, default=0.0)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-
-class GenerationRun(Base):
-    __tablename__ = "generation_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_topic: Mapped[str] = mapped_column(String(300), index=True)
-    selected_genre_id: Mapped[str] = mapped_column(ForeignKey("genres.id"), index=True)
-    selected_angle: Mapped[str] = mapped_column(String(300), default="")
-    research_brief: Mapped[str] = mapped_column(Text, default="")
-    generated_title: Mapped[str] = mapped_column(String(160), default="")
-    generated_script: Mapped[str] = mapped_column(Text, default="")
-    relevance_score: Mapped[float] = mapped_column(Float, default=0.0)
-    factual_grounding_score: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(String(60), default="created")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-
-class AiSuggestion(Base):
-    __tablename__ = "ai_suggestions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    target_table: Mapped[str] = mapped_column(String(80), index=True)
-    target_id: Mapped[str] = mapped_column(String(120), default="")
-    suggestion_type: Mapped[str] = mapped_column(String(80), default="")
-    old_value: Mapped[str] = mapped_column(Text, default="")
-    suggested_value: Mapped[str] = mapped_column(Text, default="")
-    reason: Mapped[str] = mapped_column(Text, default="")
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(String(40), default="pending")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-
-class KnowledgeImportBatch(Base):
-    __tablename__ = "knowledge_import_batches"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_file: Mapped[str] = mapped_column(String(500), default="")
-    row_counts: Mapped[dict] = mapped_column(JSON, default=dict)
-    errors: Mapped[list] = mapped_column(JSON, default=list)
-    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
