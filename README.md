@@ -29,3 +29,8 @@ https://your-tunnel.example/api/billing/webhook
 ```
 
 Successful checkout verification grants local access immediately; webhooks keep subscription state in sync afterward.
+
+## Documentation
+
+- [Usage guide](docs/USAGE.md): running the app, payment flow, video generation, playground, outputs, and troubleshooting.
+- [Development guide](docs/DEVELOPMENT.md): architecture, setup, services, tests, pipeline internals, and common engineering tasks.
