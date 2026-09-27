@@ -1,5 +1,7 @@
 # Youtube-Automation-V1
 
+An end-to-end YouTube automation project that combines content generation, media processing, rendering, and paid desktop access in one workflow.
+
 ## Paid Desktop App
 
 This repo now has two customer-facing surfaces:
